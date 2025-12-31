@@ -1,0 +1,3 @@
+opencv-python
+numpy
+synology_api
