@@ -7,17 +7,17 @@ import cv2
 import numpy as np
 import time
 from datetime import datetime
-from synology_api import surveillance_station
+from synology_api import surveillancestation
 import os
 
 # ============== CONFIGURATION ==============
 SYNOLOGY_CONFIG = {
     "ip_address": os.environ.get('ip_address'),      # e.g., "192.168.1.100"
-    "port": os.environ.get('ip_address'),                    # Default: 5000 (HTTP) or 5001 (HTTPS)
+    "port": os.environ.get('port'),                    # Default: 5000 (HTTP) or 5001 (HTTPS)
     "username": os.environ.get('username'),
     "password": os.environ.get('password'),
-    "secure": False,                   # Set True for HTTPS
-    "cert_verify": False,
+    "secure": True,                   # Set True for HTTPS
+    "cert_verify": True,
     "dsm_version": 7,                  # DSM version (6 or 7)
     "otp_code": None                   # 2FA code if enabled
 }
@@ -32,8 +32,22 @@ def load_model():
     """Load MobileNet SSD model for object detection."""
     # Download these files if you don't have them:
     # https://github.com/chuanqi305/MobileNet-SSD
-    prototxt = "MobileNetSSD_deploy.prototxt"
-    weights = "MobileNetSSD_deploy.caffemodel"
+
+    from pathlib import Path
+    script_dir = Path(__file__).parent.resolve()
+    print(script_dir)
+
+
+    prototxt = os.path.join(".", "MobileNetSSN", "MobileNetSSD_deploy.prototxt")
+    weights = os.path.join(".", "MobileNetSSN", "MobileNetSSD_deploy.caffemodel")
+
+    
+    file_path = Path(prototxt)
+
+    if file_path.is_file():
+        print("File exists")
+    else:
+        print("File does not exist")
     
     net = cv2.dnn.readNetFromCaffe(prototxt, weights)
     
@@ -49,7 +63,7 @@ def connect_to_synology():
     """Establish connection to Synology Surveillance Station."""
     print("Connecting to Synology Surveillance Station...")
     
-    ss = surveillance_station.SurveillanceStation(
+    ss = surveillancestation.SurveillanceStation(
         ip_address=SYNOLOGY_CONFIG["ip_address"],
         port=SYNOLOGY_CONFIG["port"],
         username=SYNOLOGY_CONFIG["username"],
@@ -66,14 +80,14 @@ def connect_to_synology():
 def get_camera_stream_url(ss, camera_id):
     """Get the RTSP or MJPEG stream URL for a camera."""
     # Get camera info
-    camera_info = ss.camera_info(camera_id)
+    camera_info = ss.get_camera_info(camera_id)
     
     # Try to get live view path
-    live_path = ss.camera_snapshot(camera_id)  # Gets snapshot URL pattern
+    live_path = ss.get_snapshot(camera_id)  # Gets snapshot URL pattern
     
     # Construct stream URL (adjust based on your setup)
     base_url = f"{'https' if SYNOLOGY_CONFIG['secure'] else 'http'}://{SYNOLOGY_CONFIG['ip_address']}:{SYNOLOGY_CONFIG['port']}"
-    stream_url = f"{base_url}/webapi/entry.cgi?api=SYNO.SurveillanceStation.VideoStreaming&version=1&method=Stream&cameraId={camera_id}&format=mjpeg&_sid={ss.session_id}"
+    stream_url = f"{base_url}/webapi/entry.cgi?api=SYNO.SurveillanceStation.VideoStreaming&version=1&method=Stream&cameraId={camera_id}&format=mjpeg&_sid={ss.session.sid}"
     
     return stream_url
 
