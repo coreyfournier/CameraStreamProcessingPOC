@@ -7,9 +7,10 @@ import cv2
 import numpy as np
 import time
 from datetime import datetime
-from synology_api import surveillancestation
+from CameraSource import CameraSource
 import os
 import json
+
 # ============== CONFIGURATION ==============
 SYNOLOGY_CONFIG = {
     "ip_address": os.environ.get('ip_address'),      # e.g., "192.168.1.100"
@@ -22,7 +23,7 @@ SYNOLOGY_CONFIG = {
     "otp_code": None                   # 2FA code if enabled
 }
 
-CAMERA_ID = 1                          # Camera ID in Surveillance Station
+CAMERA_ID = 2                          # Camera ID in Surveillance Station
 OUTPUT_DIR = "./recordings"            # Output directory for videos
 DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
 RECORD_DURATION = 30                   # Seconds per video clip
@@ -58,50 +59,7 @@ def load_model():
     
     return net, classes
 
-# ============== CONNECT TO SURVEILLANCE STATION ==============
-def connect_to_synology():
-    """Establish connection to Synology Surveillance Station."""
-    print("Connecting to Synology Surveillance Station...")
-    
-    ss = surveillancestation.SurveillanceStation(
-        ip_address=SYNOLOGY_CONFIG["ip_address"],
-        port=SYNOLOGY_CONFIG["port"],
-        username=SYNOLOGY_CONFIG["username"],
-        password=SYNOLOGY_CONFIG["password"],
-        secure=SYNOLOGY_CONFIG["secure"],
-        cert_verify=SYNOLOGY_CONFIG["cert_verify"],
-        dsm_version=SYNOLOGY_CONFIG["dsm_version"],
-        otp_code=SYNOLOGY_CONFIG["otp_code"]
-    )
 
-    cameras = ss.camera_list()['data']['cameras']
-    for camera in cameras:
-        print(f'{camera['id']} {camera['ip']} {camera['newName']}\n')
-    
-    print("Connected successfully!")
-    return ss
-
-def get_camera_stream_url(ss, camera_id) -> any:
-    """Get the RTSP or MJPEG stream URL for a camera."""
-    # Get camera info
-    camera_info = ss.get_camera_info(camera_id)
-    camera = camera_info['data']['cameras'][0]
-    
-    # Try to get live view path
-    snap_shot = ss.get_snapshot(camera_id)  # Gets snapshot URL pattern
-    outputDir = os.path.join('.', 'camera')
-
-    os.makedirs(outputDir, exist_ok=True)
-
-    with open(os.path.join(outputDir,f'{camera['name']}.jpg'), 'wb') as file:
-        file.write(snap_shot)
-
-    camera_object = None
-    for camera in ss.get_live_path(camera_id)['data']:
-        camera_object = camera        
-        print(json.dumps(camera))
-
-    return camera_object
 
 # ============== OBJECT DETECTION ==============
 def detect_objects(frame, net, classes, confidence_threshold):
@@ -161,20 +119,27 @@ def main():
     net, classes = load_model()
     
     # Connect to Synology
-    ss = connect_to_synology()
+    cs = CameraSource(SYNOLOGY_CONFIG)
+    ss = cs.connect()
     
     # Get stream URL
-    stream_url = get_camera_stream_url(ss, CAMERA_ID)
+    stream_url = cs.get_camera_stream_url(ss, CAMERA_ID)
+    print(json.dumps(stream_url))
     print(f"Stream URL: {stream_url}")
     
     # Open video stream
     print("Opening video stream...")
-    cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
+    cap = None
     
+    if('rtspOverHttpPath' in stream_url):
+        # Fallback: Try direct RTSP if available
+        print("trying RTSP...")
+        cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
+
     if not cap.isOpened():
         # Fallback: Try direct RTSP if available
-        print("MJPEG stream failed, trying RTSP...")
-        cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
+        print("trying MJPEG...")
+        cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
     
     if not cap.isOpened():
         print("Error: Could not open video stream")

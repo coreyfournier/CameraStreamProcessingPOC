@@ -2,3 +2,4 @@
 .venv
 camera
 recordings
+__pycache__
