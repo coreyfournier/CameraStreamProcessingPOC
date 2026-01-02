@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from synology_api import surveillancestation
 import os
-
+import json
 # ============== CONFIGURATION ==============
 SYNOLOGY_CONFIG = {
     "ip_address": os.environ.get('ip_address'),      # e.g., "192.168.1.100"
@@ -73,23 +73,35 @@ def connect_to_synology():
         dsm_version=SYNOLOGY_CONFIG["dsm_version"],
         otp_code=SYNOLOGY_CONFIG["otp_code"]
     )
+
+    cameras = ss.camera_list()['data']['cameras']
+    for camera in cameras:
+        print(f'{camera['id']} {camera['ip']} {camera['newName']}\n')
     
     print("Connected successfully!")
     return ss
 
-def get_camera_stream_url(ss, camera_id):
+def get_camera_stream_url(ss, camera_id) -> any:
     """Get the RTSP or MJPEG stream URL for a camera."""
     # Get camera info
     camera_info = ss.get_camera_info(camera_id)
+    camera = camera_info['data']['cameras'][0]
     
     # Try to get live view path
-    live_path = ss.get_snapshot(camera_id)  # Gets snapshot URL pattern
-    
-    # Construct stream URL (adjust based on your setup)
-    base_url = f"{'https' if SYNOLOGY_CONFIG['secure'] else 'http'}://{SYNOLOGY_CONFIG['ip_address']}:{SYNOLOGY_CONFIG['port']}"
-    stream_url = f"{base_url}/webapi/entry.cgi?api=SYNO.SurveillanceStation.VideoStreaming&version=1&method=Stream&cameraId={camera_id}&format=mjpeg&_sid={ss.session.sid}"
-    
-    return stream_url
+    snap_shot = ss.get_snapshot(camera_id)  # Gets snapshot URL pattern
+    outputDir = os.path.join('.', 'camera')
+
+    os.makedirs(outputDir, exist_ok=True)
+
+    with open(os.path.join(outputDir,f'{camera['name']}.jpg'), 'wb') as file:
+        file.write(snap_shot)
+
+    camera_object = None
+    for camera in ss.get_live_path(camera_id)['data']:
+        camera_object = camera        
+        print(json.dumps(camera))
+
+    return camera_object
 
 # ============== OBJECT DETECTION ==============
 def detect_objects(frame, net, classes, confidence_threshold):
@@ -157,13 +169,12 @@ def main():
     
     # Open video stream
     print("Opening video stream...")
-    cap = cv2.VideoCapture(stream_url)
+    cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
     
     if not cap.isOpened():
         # Fallback: Try direct RTSP if available
         print("MJPEG stream failed, trying RTSP...")
-        rtsp_url = f"rtsp://{SYNOLOGY_CONFIG['username']}:{SYNOLOGY_CONFIG['password']}@{SYNOLOGY_CONFIG['ip_address']}:554/Sms=1.unicast"
-        cap = cv2.VideoCapture(rtsp_url)
+        cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
     
     if not cap.isOpened():
         print("Error: Could not open video stream")
