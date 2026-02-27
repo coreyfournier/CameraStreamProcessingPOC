@@ -134,13 +134,16 @@ def main():
     print("Opening video stream...")
     cap = None
     
-    if('rtspOverHttpPath' in stream_url):
-        # Fallback: Try direct RTSP if available
-        print("trying RTSP...")
-        cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
+    if('rtspPath' in stream_url):
+        print("trying RTSP (full resolution)...")
+        cap = cv2.VideoCapture(stream_url['rtspPath'])
 
-    if not cap.isOpened():
-        # Fallback: Try direct RTSP if available
+    if not cap or not cap.isOpened():
+        if('rtspOverHttpPath' in stream_url):
+            print("trying RTSP over HTTP...")
+            cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
+
+    if not cap or not cap.isOpened():
         print("trying MJPEG...")
         cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
     
