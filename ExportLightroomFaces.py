@@ -334,6 +334,7 @@ def main():
         stats = {
             "total_faces_in_catalog": len(faces),
             "exported": 0,
+            "skipped_already_exists": 0,
             "skipped_missing_image": 0,
             "skipped_load_failed": 0,
             "skipped_too_small": 0,
@@ -342,8 +343,6 @@ def main():
             "warnings": [],
         }
 
-        # Group by person for sequential numbering
-        person_counters = {}
         # LRU cache: keep at most 100 images in memory to avoid OOM
         IMAGE_CACHE_SIZE = 100
         image_cache = collections.OrderedDict()
@@ -352,6 +351,15 @@ def main():
         for i, face in enumerate(faces):
             name = face["name"]
             safe_name = sanitize_name(name)
+            face_id = face["face_id"]
+
+            # Check if already exported (face_id-based filename)
+            person_dir = output_dir / safe_name
+            face_path = person_dir / f"face_{face_id}.jpg"
+            if face_path.exists():
+                stats["skipped_already_exists"] += 1
+                stats["per_person"][name] = stats["per_person"].get(name, 0) + 1
+                continue
 
             # Resolve source image path
             img_path = resolve_image_path(
@@ -402,13 +410,8 @@ def main():
                 continue
 
             # Save crop
-            person_dir = output_dir / safe_name
             person_dir.mkdir(exist_ok=True)
-
-            counter = person_counters.get(safe_name, 0) + 1
-            person_counters[safe_name] = counter
-
-            face_path = person_dir / f"face_{counter:03d}.jpg"
+            face_path = person_dir / f"face_{face_id}.jpg"
             crop.save(str(face_path), "JPEG", quality=95)
 
             stats["exported"] += 1
@@ -425,6 +428,8 @@ def main():
         conn.close()
 
         print(f"\nExported {stats['exported']} faces to {output_dir}")
+        if stats["skipped_already_exists"]:
+            print(f"  Skipped {stats['skipped_already_exists']} (already exported)")
         if stats["skipped_missing_image"]:
             print(f"  Skipped {stats['skipped_missing_image']} (missing source image)")
         if stats["skipped_load_failed"]:

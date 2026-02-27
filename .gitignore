@@ -7,3 +7,4 @@ __pycache__
 .claude/settings.local.json
 .faces
 faces-output
+docker-compose.faces.local.yml

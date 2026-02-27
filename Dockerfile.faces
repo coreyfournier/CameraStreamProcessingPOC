@@ -11,9 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-dev \
         libopenblas-dev \
         liblapack-dev \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir dlib face_recognition Pillow
+RUN pip install --no-cache-dir dlib Pillow \
+    && pip install --no-cache-dir git+https://github.com/ageitgey/face_recognition_models \
+    && pip install --no-cache-dir face_recognition
 
 # --- Stage 2: Runtime ---
 FROM python:3.12-slim
@@ -26,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy installed Python packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+
+# Ensure setuptools is available (needed by face_recognition_models for pkg_resources)
+RUN pip install --no-cache-dir "setuptools<71"
 
 # Create non-root user
 RUN useradd --create-home appuser
