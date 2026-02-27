@@ -47,7 +47,29 @@ def parse_args():
         "--skip-encodings", action="store_true",
         help="Skip computing face encodings (useful if dlib is not installed)."
     )
+    p.add_argument(
+        "--root-remap", action="append", default=[], metavar="SRC=>DST",
+        help="Remap catalog root paths. E.g. --root-remap \"X:/=>/photos\" "
+             "replaces paths starting with X:/ to /photos/. Can be repeated."
+    )
     return p.parse_args()
+
+
+def parse_root_remaps(remap_args):
+    """Parse --root-remap arguments into (src, dst) tuples.
+
+    Each argument has the form "SRC=>DST". Backslashes are normalized to
+    forward slashes and trailing slashes are ensured for prefix matching.
+    """
+    remaps = []
+    for arg in remap_args:
+        if "=>" not in arg:
+            raise ValueError(f"Invalid --root-remap format (expected SRC=>DST): {arg}")
+        src, dst = arg.split("=>", 1)
+        src = src.replace("\\", "/").rstrip("/") + "/"
+        dst = dst.replace("\\", "/").rstrip("/") + "/"
+        remaps.append((src, dst))
+    return remaps
 
 
 def open_catalog(catalog_path):
@@ -149,10 +171,20 @@ def query_named_faces(conn, person_filter=None):
     return results
 
 
-def resolve_image_path(root_path, path_from_root, base_name, extension):
+def resolve_image_path(root_path, path_from_root, base_name, extension,
+                       root_remaps=None):
     """Build a full filesystem path from Lightroom's decomposed path components."""
     # Lightroom stores root as e.g. "/Users/name/Pictures/" or "C:/Photos/"
     # path_from_root is relative folder, base_name + extension is the file
+    if root_remaps:
+        normalized = root_path.replace("\\", "/")
+        if not normalized.endswith("/"):
+            normalized += "/"
+        for src, dst in root_remaps:
+            if normalized.startswith(src):
+                root_path = dst + normalized[len(src):]
+                break
+
     filename = f"{base_name}.{extension}" if extension else base_name
     full = Path(root_path) / path_from_root / filename
     return full
@@ -272,6 +304,7 @@ def save_export_log(output_dir, stats):
 
 def main():
     args = parse_args()
+    root_remaps = parse_root_remaps(args.root_remap)
     catalog_path = args.catalog
     output_dir = Path(args.output)
     temp_dir = None
@@ -323,7 +356,8 @@ def main():
             # Resolve source image path
             img_path = resolve_image_path(
                 face["root_path"], face["path_from_root"],
-                face["base_name"], face["extension"]
+                face["base_name"], face["extension"],
+                root_remaps=root_remaps,
             )
 
             if not img_path.exists():

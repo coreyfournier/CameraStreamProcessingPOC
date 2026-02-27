@@ -1,0 +1,11 @@
+services:
+  export-faces:
+    build:
+      context: .
+      dockerfile: Dockerfile.faces
+    volumes:
+      - ${CATALOG_DIR:-.}:/catalog:ro
+      - ${PHOTOS_DIR:-.}:/photos:ro
+      - ${OUTPUT_DIR:-./faces-output}:/output
+    environment:
+      - PYTHONUNBUFFERED=1

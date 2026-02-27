@@ -1,0 +1,38 @@
+# Multi-stage build for ExportLightroomFaces with dlib/face_recognition
+# Build: docker build -f Dockerfile.faces -t lightroom-faces .
+# Run:   docker compose -f docker-compose.faces.yml run --rm export-faces --help
+
+# --- Stage 1: Build dlib and face_recognition ---
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        build-essential \
+        python3-dev \
+        libopenblas-dev \
+        liblapack-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir dlib face_recognition Pillow
+
+# --- Stage 2: Runtime ---
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libopenblas0 \
+        liblapack3 \
+        libjpeg62-turbo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+
+# Create non-root user
+RUN useradd --create-home appuser
+USER appuser
+WORKDIR /app
+
+COPY ExportLightroomFaces.py .
+
+ENTRYPOINT ["python", "ExportLightroomFaces.py"]
+CMD ["--help"]
