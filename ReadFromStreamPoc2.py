@@ -1,16 +1,20 @@
 """
-Synology Surveillance Station Object Detection Script
-Connects to Surveillance Station, reads camera stream, detects objects, saves annotated video.
+Synology Surveillance Station Person Detection Script
+Connects to Surveillance Station, reads camera stream, detects people,
+optionally matches faces against a known-faces database, and records
+annotated video clips.
 """
 
 import cv2
-import numpy as np
 import time
 from datetime import datetime
 from CameraSource import CameraSource
 import os
 import json
 from dotenv import load_dotenv
+
+from detection_pipeline import DetectionPipeline
+from events import FaceMatchResult, PersonDetection
 
 load_dotenv()
 
@@ -31,139 +35,167 @@ OUTPUT_DIR = "./recordings"            # Output directory for videos
 DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
 RECORD_DURATION = 30                   # Seconds per video clip
 
-# ============== LOAD DETECTION MODEL ==============
-def load_model():
-    """Load MobileNet SSD model for object detection."""
-    # Download these files if you don't have them:
-    # https://github.com/chuanqi305/MobileNet-SSD
+# Face matching settings
+ENCODINGS_PATH = "./faces/encodings.pkl"  # Path to face encodings database
+MATCH_SKIP_FRAMES = 5                     # Attempt face match every Nth person-detection frame
+MATCH_TOLERANCE = 0.6                     # Max face distance for a match (lower = stricter)
+MATCH_MIN_CONFIDENCE = 0.5               # Ignore person detections below this for matching
 
-    from pathlib import Path
-    script_dir = Path(__file__).parent.resolve()
-    print(script_dir)
-
-
-    prototxt = os.path.join(".", "MobileNetSSN", "MobileNetSSD_deploy.prototxt")
-    weights = os.path.join(".", "MobileNetSSN", "MobileNetSSD_deploy.caffemodel")
-
-    
-    file_path = Path(prototxt)
-
-    if file_path.is_file():
-        print("File exists")
-    else:
-        print("File does not exist")
-    
-    net = cv2.dnn.readNetFromCaffe(prototxt, weights)
-    
-    classes = ["background", "aeroplane", "bicycle", "bird", "boat",
-               "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-               "dog", "horse", "motorbike", "person", "pottedplant",
-               "sheep", "sofa", "train", "tvmonitor"]
-    
-    return net, classes
+# Colors (BGR)
+COLOR_MATCHED = (0, 200, 0)     # Green — known face
+COLOR_UNMATCHED = (0, 220, 255) # Yellow — person, unknown face
 
 
+# ============== DRAWING ==============
 
-# ============== OBJECT DETECTION ==============
-def detect_objects(frame, net, classes, confidence_threshold):
-    """Detect objects in a frame using MobileNet SSD."""
-    h, w = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
-    
-    net.setInput(blob)
-    detections = net.forward()
-    
-    results = []
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
-        
-        if confidence > confidence_threshold:
-            class_id = int(detections[0, 0, i, 1])
-            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            (x1, y1, x2, y2) = box.astype("int")
-            
-            results.append({
-                "class": classes[class_id],
-                "confidence": float(confidence),
-                "box": (x1, y1, x2, y2)
-            })
-    
-    return results
+def _box_center(box):
+    """Return (cx, cy) of a bounding box (x1, y1, x2, y2)."""
+    x1, y1, x2, y2 = box
+    return ((x1 + x2) / 2, (y1 + y2) / 2)
 
-def draw_detections(frame, detections):
-    """Draw bounding boxes and labels on frame."""
-    for det in detections:
-        x1, y1, x2, y2 = det["box"]
-        label = f"{det['class']}: {det['confidence']:.2f}"
-        
+
+def _box_distance_sq(box_a, box_b):
+    """Squared Euclidean distance between two box centers."""
+    ax, ay = _box_center(box_a)
+    bx, by = _box_center(box_b)
+    return (ax - bx) ** 2 + (ay - by) ** 2
+
+
+def _associate_matches(detections, match_results):
+    """Associate async match results to current detections by box proximity.
+
+    Returns a dict mapping detection index → FaceMatchResult (or None).
+    """
+    associations = {}
+    if not match_results:
+        return associations
+
+    # For each current detection, find the closest match result by box center
+    used = set()
+    for i, det in enumerate(detections):
+        best_j = None
+        best_dist = float("inf")
+        for j, mr in enumerate(match_results):
+            if j in used:
+                continue
+            d = _box_distance_sq(det.box, mr.person_detection.box)
+            if d < best_dist:
+                best_dist = d
+                best_j = j
+        if best_j is not None:
+            associations[i] = match_results[best_j]
+            used.add(best_j)
+
+    return associations
+
+
+def draw_detections(frame, detections, match_results):
+    """Draw bounding boxes and labels on frame.
+
+    - Green box + person name for matched faces
+    - Yellow box + "Person" for unmatched detections
+    """
+    associations = _associate_matches(detections, match_results)
+
+    for i, det in enumerate(detections):
+        x1, y1, x2, y2 = det.box
+        mr = associations.get(i)
+
+        if mr and mr.matched:
+            color = COLOR_MATCHED
+            label = f"{mr.person_name} ({mr.confidence:.0%})"
+        else:
+            color = COLOR_UNMATCHED
+            label = f"Person ({det.confidence:.0%})"
+
         # Draw box
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
         # Draw label background
         label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-        cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), (x1 + label_size[0], y1), (0, 255, 0), -1)
-        
+        cv2.rectangle(
+            frame,
+            (x1, y1 - label_size[1] - 10),
+            (x1 + label_size[0], y1),
+            color,
+            -1,
+        )
+
         # Draw label text
-        cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-    
+        cv2.putText(
+            frame, label, (x1, y1 - 5),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
+        )
+
     # Add timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cv2.putText(frame, timestamp, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
+    cv2.putText(
+        frame, timestamp, (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2,
+    )
+
     return frame
+
 
 # ============== MAIN PROCESSING LOOP ==============
 def main():
-    import os
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    # Load model
-    print("Loading detection model...")
-    net, classes = load_model()
-    
+
+    # Initialise detection pipeline
+    print("Initialising detection pipeline...")
+    pipeline = DetectionPipeline(
+        confidence_threshold=DETECTION_CONFIDENCE,
+        encodings_path=ENCODINGS_PATH,
+        match_tolerance=MATCH_TOLERANCE,
+        match_min_confidence=MATCH_MIN_CONFIDENCE,
+        match_skip_frames=MATCH_SKIP_FRAMES,
+    )
+    pipeline.start()
+
     # Connect to Synology
     cs = CameraSource(SYNOLOGY_CONFIG)
     ss = cs.connect()
-    
+
     # Get stream URL
     stream_url = cs.get_camera_stream_url(ss, CAMERA_ID)
     print(json.dumps(stream_url))
     print(f"Stream URL: {stream_url}")
-    
+
     # Open video stream
     print("Opening video stream...")
     cap = None
-    
-    if('rtspPath' in stream_url):
+
+    if 'rtspPath' in stream_url:
         print("trying RTSP (full resolution)...")
         cap = cv2.VideoCapture(stream_url['rtspPath'])
 
     if not cap or not cap.isOpened():
-        if('rtspOverHttpPath' in stream_url):
+        if 'rtspOverHttpPath' in stream_url:
             print("trying RTSP over HTTP...")
             cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
 
     if not cap or not cap.isOpened():
         print("trying MJPEG...")
         cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
-    
+
     if not cap.isOpened():
         print("Error: Could not open video stream")
+        pipeline.stop()
         return
-    
+
     # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
-    
+
     print(f"Stream opened: {width}x{height} @ {fps}fps")
-    
+
     # Video writer setup
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = None
     clip_start_time = time.time()
     clip_number = 0
-    
+
     def start_new_clip():
         nonlocal out, clip_start_time, clip_number
         clip_number += 1
@@ -173,12 +205,12 @@ def main():
         clip_start_time = time.time()
         print(f"Recording: {filename}")
         return filename
-    
+
     current_file = start_new_clip()
-    
+
     print("Starting detection loop (press 'q' to quit)...")
     frame_count = 0
-    
+
     try:
         while True:
             ret, frame = cap.read()
@@ -187,40 +219,51 @@ def main():
                 time.sleep(1)
                 cap = cv2.VideoCapture(stream_url)
                 continue
-            
-            # Detect objects
-            detections = detect_objects(frame, net, classes, DETECTION_CONFIDENCE)
-            
+
+            frame_count += 1
+
+            # Detect people (synchronous)
+            detections = pipeline.process_frame(frame, frame_count)
+
+            # Poll latest face-match results (non-blocking, from background thread)
+            match_results = pipeline.get_latest_matches()
+
             # Draw detections on frame
-            annotated_frame = draw_detections(frame.copy(), detections)
-            
+            annotated_frame = draw_detections(frame.copy(), detections, match_results)
+
             # Write to video file
             out.write(annotated_frame)
-            frame_count += 1
-            
+
             # Log detections
             if detections:
-                detected_classes = [d["class"] for d in detections]
-                print(f"Frame {frame_count}: Detected {detected_classes}")
-            
+                names = []
+                for mr in match_results:
+                    if mr.matched:
+                        names.append(mr.person_name)
+                summary = f"{len(detections)} person(s)"
+                if names:
+                    summary += f" [{', '.join(names)}]"
+                print(f"Frame {frame_count}: {summary}")
+
             # Start new clip if duration exceeded
             if time.time() - clip_start_time >= RECORD_DURATION:
                 out.release()
                 print(f"Saved clip: {current_file} ({frame_count} frames)")
                 frame_count = 0
                 current_file = start_new_clip()
-            
+
             # Display frame (optional - comment out for headless)
             cv2.imshow("Surveillance Detection", annotated_frame)
-            
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-                
+
     except KeyboardInterrupt:
         print("\nStopping...")
-    
+
     finally:
         # Cleanup
+        pipeline.stop()
         if out:
             out.release()
         cap.release()

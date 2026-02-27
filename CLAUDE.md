@@ -30,7 +30,28 @@ There are no tests, linting, or CI/CD configured.
 
 **CameraSource.py** — Synology Surveillance Station client wrapper. Handles connection, camera enumeration, stream URL retrieval, and URL fixup (the NAS sometimes returns incorrect protocol/port in stream URLs, so `fixAddress()` corrects them).
 
-**ReadFromStreamPoc2.py** — Main entry point. Loads MobileNet-SSD model, connects to Synology via `CameraSource`, reads frames in a loop, runs object detection, draws bounding boxes/labels, and writes annotated output to MP4 clips (30-second segments) in `./recordings/`.
+**ReadFromStreamPoc2.py** — Main entry point. Connects to Synology via `CameraSource`, reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to MP4 clips (30-second segments) in `./recordings/`.
+
+### Event-driven detection pipeline
+
+The detection system uses an observer/listener pattern for decoupled, extensible processing:
+
+```
+Frame → PersonDetector ──emits "person_detected"──→ FaceMatcher ──emits "face_matched"──→ [any listener]
+              │                                           │
+              │ (returns detections synchronously)        │ (runs on background thread)
+              ↓                                           ↓
+         Main loop draws                          Main loop polls latest results
+         yellow "Person" boxes                    and upgrades to green "Name" boxes
+```
+
+**events.py** — Dataclasses (`FrameContext`, `PersonDetection`, `PersonDetectionEvent`, `FaceMatchResult`, `FaceMatchEvent`) and a thread-safe `EventEmitter` with `on()`/`off()`/`emit()`.
+
+**person_detector.py** — Wraps MobileNet-SSD, filters to class 15 (person) only. `process_frame()` returns detections synchronously AND emits `"person_detected"` events with cropped person images.
+
+**face_matcher.py** — Listens for person detections, runs `face_recognition` to match against `encodings.pkl` from `ExportLightroomFaces.py`. Emits `"face_matched"` events. Gracefully degrades if dlib/face_recognition are not installed (becomes a no-op).
+
+**detection_pipeline.py** — Orchestrator with `AsyncFaceMatcherWrapper` (background thread, bounded queue, frame skipping) and `DetectionPipeline` that wires everything together. Exposes `process_frame()` (synchronous), `get_latest_matches()` (non-blocking poll), and `on_face_matched()` (register external listeners).
 
 **ReadFromStreamPoc1.py** — Simpler CLI alternative that takes an RTSP URL directly (no Synology integration). Useful for testing detection against any RTSP source.
 
@@ -86,4 +107,4 @@ Synology credentials are loaded from `.env` (not committed):
 - `port` — Surveillance Station port (5001 for HTTPS)
 - `username` / `password` — NAS credentials
 
-Hardcoded settings in ReadFromStreamPoc2.py: `CAMERA_ID`, `DETECTION_CONFIDENCE`, `RECORD_DURATION`, SSL options (`secure`, `cert_verify`, `dsm_version`).
+Hardcoded settings in ReadFromStreamPoc2.py: `CAMERA_ID`, `DETECTION_CONFIDENCE`, `RECORD_DURATION`, `ENCODINGS_PATH`, `MATCH_SKIP_FRAMES`, `MATCH_TOLERANCE`, `MATCH_MIN_CONFIDENCE`, SSL options (`secure`, `cert_verify`, `dsm_version`).
