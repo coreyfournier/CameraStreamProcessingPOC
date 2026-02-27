@@ -12,6 +12,25 @@
             "program": "ReadFromStreamPoc2.py",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Python Debugger: ExportLightroomFaces",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "ExportLightroomFaces.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--catalog", "${input:catalogPath}",
+                "--output", "./faces/",
+                "--skip-encodings"
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "catalogPath",
+            "type": "promptString",
+            "description": "Path to Lightroom .lrcat catalog file"
         }
     ]
 }

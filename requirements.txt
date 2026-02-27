@@ -1,3 +1,6 @@
 opencv-python
 synology_api
 python-dotenv
+Pillow
+face_recognition
+dlib

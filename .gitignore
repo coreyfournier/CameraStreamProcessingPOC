@@ -2,5 +2,7 @@
 .venv
 camera
 recordings
+faces
 __pycache__
 .claude/settings.local.json
+.faces

@@ -34,6 +34,21 @@ There are no tests, linting, or CI/CD configured.
 
 **ReadFromStreamPoc1.py** — Simpler CLI alternative that takes an RTSP URL directly (no Synology integration). Useful for testing detection against any RTSP source.
 
+**ExportLightroomFaces.py** — Standalone CLI tool that extracts named faces from an Adobe Lightroom Classic catalog (`.lrcat` SQLite database). Crops face regions from source photos (handling EXIF orientation), saves them organized by person name, and optionally computes 128-d face encodings via `face_recognition` for real-time matching.
+
+```bash
+# Export all faces (without encodings — no dlib needed)
+python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --output ./faces/ --skip-encodings
+
+# Export a specific person with encodings
+python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --person "John Smith"
+
+# Full options
+python ExportLightroomFaces.py --catalog <path> [--output ./faces/] [--person "Name"] [--padding 40] [--min-size 50] [--skip-encodings]
+```
+
+Output structure: `faces/<Person_Name>/face_001.jpg`, `faces/encodings.pkl`, `faces/export_log.json`.
+
 **MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Detects 21 object classes (person, car, dog, etc.) at 300x300 input resolution with a configurable confidence threshold (default 0.5).
 
 ## Environment Configuration
