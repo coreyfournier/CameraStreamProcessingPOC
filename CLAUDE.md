@@ -44,10 +44,38 @@ python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --output ./f
 python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --person "John Smith"
 
 # Full options
-python ExportLightroomFaces.py --catalog <path> [--output ./faces/] [--person "Name"] [--padding 40] [--min-size 50] [--skip-encodings]
+python ExportLightroomFaces.py --catalog <path> [--output ./faces/] [--person "Name"] [--padding 40] [--min-size 50] [--skip-encodings] [--root-remap "SRC=>DST"]
 ```
 
-Output structure: `faces/<Person_Name>/face_001.jpg`, `faces/encodings.pkl`, `faces/export_log.json`.
+Output structure: `faces/<Person_Name>/face_<face_id>.jpg`, `faces/encodings.pkl`, `faces/export_log.json`. Face filenames use Lightroom's stable `face_id` so subsequent runs skip already-exported faces.
+
+### Docker workflow (recommended for face encodings)
+
+dlib/face_recognition require native compilation that is difficult on Windows. A multi-stage Docker build (`Dockerfile.faces`) provides Python 3.12 with pre-compiled dlib. Use `--root-remap` to translate Lightroom's Windows absolute paths to container mount points.
+
+```bash
+# Build the image (~3 min first time for dlib compilation)
+docker compose -f docker-compose.faces.yml build
+
+# Run with bind-mount volumes (generic)
+CATALOG_DIR="C:\LightRoom" PHOTOS_DIR="/path/to/photos" OUTPUT_DIR="./faces-output" \
+docker compose -f docker-compose.faces.yml run --rm export-faces \
+    --catalog /catalog/catalog.lrcat --output /output \
+    --root-remap "X:/=>/photos"
+
+# Run with local compose override for NAS CIFS mounts
+# (create docker-compose.faces.local.yml — gitignored — with CIFS volume config)
+docker compose -f docker-compose.faces.yml -f docker-compose.faces.local.yml run --rm export-faces \
+    --catalog /catalog/catalog.lrcat --output /output \
+    --root-remap "X:/=>/photos"
+```
+
+Docker volume mounts:
+- `/catalog` (ro) — directory containing the `.lrcat` file (and WAL/SHM files)
+- `/photos` (ro) — source photos root (mapped from `PHOTOS_DIR` or a CIFS volume)
+- `/output` — face crops and `encodings.pkl` output
+
+The `--root-remap` flag translates catalog paths (e.g. `X:/2022/photo.jpg`) to container paths (e.g. `/photos/2022/photo.jpg`). Can be specified multiple times for multiple roots.
 
 **MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Detects 21 object classes (person, car, dog, etc.) at 300x300 input resolution with a configurable confidence threshold (default 0.5).
 
