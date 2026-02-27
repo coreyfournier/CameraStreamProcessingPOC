@@ -138,7 +138,7 @@ You can also tune detection and matching settings at the top of `ReadFromStreamP
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `CAMERA_ID` | 2 | Camera ID in Surveillance Station |
+| `CAMERA_ID` | 2 | Default camera ID (override with `--camera`) |
 | `DETECTION_CONFIDENCE` | 0.5 | Minimum MobileNet-SSD confidence for person detection |
 | `RECORD_DURATION` | 30 | Seconds per recorded video clip |
 | `ENCODINGS_PATH` | `./faces/encodings.pkl` | Path to the face encodings database |
@@ -149,7 +149,11 @@ You can also tune detection and matching settings at the top of `ReadFromStreamP
 ## Step 4: Run the Application
 
 ```bash
+# Watch the default camera (ID 2)
 python ReadFromStreamPoc2.py
+
+# Watch a specific camera by ID
+python ReadFromStreamPoc2.py --camera 5
 ```
 
 The application will:

@@ -5,6 +5,7 @@ optionally matches faces against a known-faces database, and records
 annotated video clips.
 """
 
+import argparse
 import cv2
 import time
 from datetime import datetime
@@ -30,7 +31,7 @@ SYNOLOGY_CONFIG = {
     "otp_code": None                   # 2FA code if enabled
 }
 
-CAMERA_ID = 2                          # Camera ID in Surveillance Station
+CAMERA_ID = 2                          # Default camera ID in Surveillance Station
 OUTPUT_DIR = "./recordings"            # Output directory for videos
 DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
 RECORD_DURATION = 30                   # Seconds per video clip
@@ -137,8 +138,22 @@ def draw_detections(frame, detections, match_results):
     return frame
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Synology Surveillance Station person detection with optional face matching."
+    )
+    parser.add_argument(
+        "--camera", type=int, default=CAMERA_ID,
+        help=f"Camera ID in Surveillance Station (default: {CAMERA_ID})",
+    )
+    return parser.parse_args()
+
+
 # ============== MAIN PROCESSING LOOP ==============
 def main():
+    args = parse_args()
+    camera_id = args.camera
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Initialise detection pipeline
@@ -157,7 +172,7 @@ def main():
     ss = cs.connect()
 
     # Get stream URL
-    stream_url = cs.get_camera_stream_url(ss, CAMERA_ID)
+    stream_url = cs.get_camera_stream_url(ss, camera_id)
     print(json.dumps(stream_url))
     print(f"Stream URL: {stream_url}")
 
