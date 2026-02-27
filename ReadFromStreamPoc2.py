@@ -10,13 +10,16 @@ from datetime import datetime
 from CameraSource import CameraSource
 import os
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ============== CONFIGURATION ==============
 SYNOLOGY_CONFIG = {
-    "ip_address": os.environ.get('ip_address'),      # e.g., "192.168.1.100"
-    "port": os.environ.get('port'),                    # Default: 5000 (HTTP) or 5001 (HTTPS)
-    "username": os.environ.get('username'),
-    "password": os.environ.get('password'),
+    "ip_address": os.environ.get('SYNOLOGY_IP'),       # e.g., "192.168.1.100"
+    "port": os.environ.get('SYNOLOGY_PORT'),            # Default: 5000 (HTTP) or 5001 (HTTPS)
+    "username": os.environ.get('SYNOLOGY_USERNAME'),
+    "password": os.environ.get('SYNOLOGY_PASSWORD'),
     "secure": True,                   # Set True for HTTPS
     "cert_verify": True,
     "dsm_version": 7,                  # DSM version (6 or 7)
