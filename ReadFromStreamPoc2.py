@@ -7,6 +7,7 @@ annotated video clips.
 
 import argparse
 import cv2
+import threading
 import time
 from datetime import datetime
 from CameraSource import CameraSource
@@ -31,7 +32,7 @@ SYNOLOGY_CONFIG = {
     "otp_code": None                   # 2FA code if enabled
 }
 
-CAMERA_ID = 2                          # Default camera ID in Surveillance Station
+CAMERA_ID = 14                          # Default camera ID in Surveillance Station
 OUTPUT_DIR = "./recordings"            # Output directory for videos
 DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
 RECORD_DURATION = 30                   # Seconds per video clip
@@ -45,6 +46,48 @@ MATCH_MIN_CONFIDENCE = 0.5               # Ignore person detections below this f
 # Colors (BGR)
 COLOR_MATCHED = (0, 200, 0)     # Green — known face
 COLOR_UNMATCHED = (0, 220, 255) # Yellow — person, unknown face
+
+
+# ============== THREADED FRAME READER ==============
+
+class FrameReader:
+    """Read RTSP frames on a background thread so the main loop never
+    blocks waiting on network I/O.  Only the most recent frame is kept,
+    older frames are silently dropped.
+    """
+
+    def __init__(self, cap: cv2.VideoCapture) -> None:
+        self._cap = cap
+        self._lock = threading.Lock()
+        self._frame = None
+        self._ret = False
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._reader, name="frame-reader", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def read(self):
+        """Return the most recent (ret, frame) — non-blocking."""
+        with self._lock:
+            return self._ret, self._frame
+
+    def stop(self):
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _reader(self):
+        while self._running:
+            ret, frame = self._cap.read()
+            with self._lock:
+                self._ret = ret
+                self._frame = frame
 
 
 # ============== DRAWING ==============
@@ -177,20 +220,22 @@ def main():
     print(f"Stream URL: {stream_url}")
 
     # Open video stream
+    # Force RTSP over TCP to avoid UDP packet-loss artifacts
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
     print("Opening video stream...")
     cap = None
 
     if 'rtspPath' in stream_url:
-        print("trying RTSP (full resolution)...")
-        cap = cv2.VideoCapture(stream_url['rtspPath'])
+        print("trying RTSP over TCP (full resolution)...")
+        cap = cv2.VideoCapture(stream_url['rtspPath'], cv2.CAP_FFMPEG)
 
     if not cap or not cap.isOpened():
         if 'rtspOverHttpPath' in stream_url:
             print("trying RTSP over HTTP...")
-            cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'])
+            cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'], cv2.CAP_FFMPEG)
 
     if not cap or not cap.isOpened():
-        print("trying MJPEG...")
+        print("Falling back to MJPEG...")
         cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
 
     if not cap.isOpened():
@@ -198,12 +243,18 @@ def main():
         pipeline.stop()
         return
 
+    # Minimize internal buffer so we always get the latest frame
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
     # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
 
     print(f"Stream opened: {width}x{height} @ {fps}fps")
+
+    # Start background frame reader so network I/O never blocks the loop
+    reader = FrameReader(cap).start()
 
     # Video writer setup
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -228,16 +279,14 @@ def main():
 
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Failed to read frame, reconnecting...")
-                time.sleep(1)
-                cap = cv2.VideoCapture(stream_url)
+            ret, frame = reader.read()
+            if not ret or frame is None:
+                time.sleep(0.01)
                 continue
 
             frame_count += 1
 
-            # Detect people (synchronous)
+            # Detect people (synchronous — MobileNet internally resizes to 300x300)
             detections = pipeline.process_frame(frame, frame_count)
 
             # Poll latest face-match results (non-blocking, from background thread)
@@ -278,6 +327,7 @@ def main():
 
     finally:
         # Cleanup
+        reader.stop()
         pipeline.stop()
         if out:
             out.release()
