@@ -46,7 +46,7 @@ class FaceMatcher(EventEmitter):
     tolerance : float
         Maximum face distance to consider a match (lower = stricter).
     min_detection_confidence : float
-        Ignore person detections below this MobileNet confidence.
+        Ignore person detections below this confidence.
     """
 
     def __init__(

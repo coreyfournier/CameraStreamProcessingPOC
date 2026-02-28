@@ -1,15 +1,15 @@
-"""Person-only object detection using MobileNet-SSD.
+"""Person-only object detection using YOLOv8.
 
-Wraps the Caffe model and filters detections to class 15 (person).
-Returns detections synchronously AND emits events for async listeners.
+Wraps the Ultralytics YOLOv8 nano model and filters detections to
+class 0 (person).  Returns detections synchronously AND emits events
+for async listeners.
 """
 
 from __future__ import annotations
 
-import os
-
 import cv2
 import numpy as np
+from ultralytics import YOLO
 
 from events import (
     EventEmitter,
@@ -18,11 +18,11 @@ from events import (
     PersonDetectionEvent,
 )
 
-PERSON_CLASS_ID = 15
+PERSON_CLASS_ID = 0  # COCO class 0 = person
 
 
 class PersonDetector(EventEmitter):
-    """Loads MobileNet-SSD and detects people in video frames.
+    """Loads YOLOv8 and detects people in video frames.
 
     Inherits from EventEmitter so callers can subscribe to
     ``"person_detected"`` events.
@@ -30,22 +30,19 @@ class PersonDetector(EventEmitter):
 
     def __init__(
         self,
-        prototxt: str | None = None,
-        weights: str | None = None,
+        model_name: str = "yolov8n.pt",
         confidence_threshold: float = 0.5,
     ) -> None:
         super().__init__()
-        prototxt = prototxt or os.path.join(
-            ".", "MobileNetSSN", "MobileNetSSD_deploy.prototxt"
-        )
-        weights = weights or os.path.join(
-            ".", "MobileNetSSN", "MobileNetSSD_deploy.caffemodel"
-        )
-        self.net = cv2.dnn.readNetFromCaffe(prototxt, weights)
+        self.model = YOLO(model_name, verbose=False)
         self.confidence_threshold = confidence_threshold
 
     def process_frame(self, context: FrameContext) -> list[PersonDetection]:
         """Run detection on *context.frame*, return person detections.
+
+        YOLOv8 handles multi-scale detection natively (640x640 input
+        with feature pyramid), so no tiling is needed even for
+        high-resolution frames.
 
         Also emits a ``"person_detected"`` event when at least one person
         is found so that async listeners (e.g. FaceMatcher) can react.
@@ -53,43 +50,37 @@ class PersonDetector(EventEmitter):
         frame = context.frame
         h, w = frame.shape[:2]
 
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5
+        results = self.model(
+            frame,
+            classes=[PERSON_CLASS_ID],
+            conf=self.confidence_threshold,
+            verbose=False,
         )
-        self.net.setInput(blob)
-        raw = self.net.forward()
 
         detections: list[PersonDetection] = []
-        for i in range(raw.shape[2]):
-            confidence = float(raw[0, 0, i, 2])
-            class_id = int(raw[0, 0, i, 1])
+        for r in results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+                confidence = float(box.conf[0])
 
-            if class_id != PERSON_CLASS_ID:
-                continue
-            if confidence < self.confidence_threshold:
-                continue
+                # Clamp to frame boundaries
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(w, x2)
+                y2 = min(h, y2)
 
-            box = raw[0, 0, i, 3:7] * np.array([w, h, w, h])
-            x1, y1, x2, y2 = box.astype("int")
+                if x2 <= x1 or y2 <= y1:
+                    continue
 
-            # Clamp to frame boundaries
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w, x2)
-            y2 = min(h, y2)
+                crop = frame[y1:y2, x1:x2].copy()
 
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            crop = frame[y1:y2, x1:x2].copy()
-
-            detections.append(
-                PersonDetection(
-                    confidence=confidence,
-                    box=(x1, y1, x2, y2),
-                    person_crop=crop,
+                detections.append(
+                    PersonDetection(
+                        confidence=confidence,
+                        box=(x1, y1, x2, y2),
+                        person_crop=crop,
+                    )
                 )
-            )
 
         if detections:
             self.emit(

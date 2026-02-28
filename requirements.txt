@@ -2,5 +2,6 @@ opencv-python
 synology_api
 python-dotenv
 Pillow
+ultralytics
 face_recognition
 dlib

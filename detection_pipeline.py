@@ -131,7 +131,7 @@ class DetectionPipeline:
     Parameters
     ----------
     confidence_threshold : float
-        MobileNet-SSD confidence cutoff for person detection.
+        Confidence cutoff for person detection.
     encodings_path : str
         Path to ``encodings.pkl`` for face matching.
     match_tolerance : float

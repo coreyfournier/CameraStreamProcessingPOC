@@ -316,7 +316,7 @@ def main():
 
             frame_count += 1
 
-            # Detect people (synchronous — MobileNet internally resizes to 300x300)
+            # Detect people (synchronous)
             detections = pipeline.process_frame(frame, frame_count)
 
             # Poll latest face-match results (non-blocking, from background thread)

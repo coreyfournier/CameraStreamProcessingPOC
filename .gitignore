@@ -9,3 +9,4 @@ __pycache__
 faces-output
 docker-compose.faces.local.yml
 examples
+*.pt
