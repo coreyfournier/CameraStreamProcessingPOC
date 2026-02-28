@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Python proof-of-concept for real-time camera stream processing with object detection. Connects to a Synology Surveillance Station NAS via its API, reads RTSP/MJPEG camera streams, runs MobileNet-SSD object detection on each frame, and records annotated video clips.
+Python proof-of-concept for real-time camera stream processing with object detection. Connects to a Synology Surveillance Station NAS via its API, reads RTSP/MJPEG camera streams, runs YOLOv8 person detection on each frame, optionally matches faces against a known-faces database, and records annotated video clips.
 
 ## Setup and Running
 
@@ -30,7 +30,7 @@ There are no tests, linting, or CI/CD configured.
 
 **CameraSource.py** — Synology Surveillance Station client wrapper. Handles connection, camera enumeration, stream URL retrieval, and URL fixup (the NAS sometimes returns incorrect protocol/port in stream URLs, so `fixAddress()` corrects them).
 
-**ReadFromStreamPoc2.py** — Main entry point. Connects to Synology via `CameraSource`, reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to MP4 clips (30-second segments) in `./recordings/`.
+**ReadFromStreamPoc2.py** — Main entry point. Connects to Synology via `CameraSource` (or reads a video file via `--source`), reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to AVI clips (30-second segments) in `./recordings/`.
 
 ### Event-driven detection pipeline
 
@@ -47,7 +47,7 @@ Frame → PersonDetector ──emits "person_detected"──→ FaceMatcher ─�
 
 **events.py** — Dataclasses (`FrameContext`, `PersonDetection`, `PersonDetectionEvent`, `FaceMatchResult`, `FaceMatchEvent`) and a thread-safe `EventEmitter` with `on()`/`off()`/`emit()`.
 
-**person_detector.py** — Wraps MobileNet-SSD, filters to class 15 (person) only. `process_frame()` returns detections synchronously AND emits `"person_detected"` events with cropped person images.
+**person_detector.py** — Wraps YOLOv8 nano (`yolov8n.pt`, auto-downloaded on first run). Filters to COCO class 0 (person) only. YOLOv8's 640x640 input with feature pyramid network handles multi-scale detection natively, so high-resolution frames (e.g. 2304x1296) don't need tiling. `process_frame()` returns detections synchronously AND emits `"person_detected"` events with cropped person images.
 
 **face_matcher.py** — Listens for person detections, runs `face_recognition` to match against `encodings.pkl` from `ExportLightroomFaces.py`. Emits `"face_matched"` events. Gracefully degrades if dlib/face_recognition are not installed (becomes a no-op).
 
@@ -98,7 +98,7 @@ Docker volume mounts:
 
 The `--root-remap` flag translates catalog paths (e.g. `X:/2022/photo.jpg`) to container paths (e.g. `/photos/2022/photo.jpg`). Can be specified multiple times for multiple roots.
 
-**MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Detects 21 object classes (person, car, dog, etc.) at 300x300 input resolution with a configurable confidence threshold (default 0.5).
+**MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Used only by `ReadFromStreamPoc1.py` (the legacy RTSP script). The main pipeline (`ReadFromStreamPoc2.py`) uses YOLOv8 instead.
 
 ## Environment Configuration
 
