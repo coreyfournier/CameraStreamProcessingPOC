@@ -8,3 +8,4 @@ __pycache__
 .faces
 faces-output
 docker-compose.faces.local.yml
+examples

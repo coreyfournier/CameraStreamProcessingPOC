@@ -1,3 +1,5 @@
 # Include only ExportLightroomFaces.py — exclude everything else
 *
 !ExportLightroomFaces.py
+examples
+.env

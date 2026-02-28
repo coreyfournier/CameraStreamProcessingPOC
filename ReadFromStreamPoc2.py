@@ -189,6 +189,14 @@ def parse_args():
         "--camera", type=int, default=CAMERA_ID,
         help=f"Camera ID in Surveillance Station (default: {CAMERA_ID})",
     )
+    parser.add_argument(
+        "--source", type=str, default=None,
+        help="Path to a video file to use instead of a live camera stream",
+    )
+    parser.add_argument(
+        "--loop", action="store_true",
+        help="Loop the source video file when it ends (only with --source)",
+    )
     return parser.parse_args()
 
 
@@ -210,54 +218,67 @@ def main():
     )
     pipeline.start()
 
-    # Connect to Synology
-    cs = CameraSource(SYNOLOGY_CONFIG)
-    ss = cs.connect()
+    # Open video source (file or live stream)
+    is_file = args.source is not None
+    if is_file:
+        print(f"Opening video file: {args.source}")
+        cap = cv2.VideoCapture(args.source)
+        if not cap.isOpened():
+            print(f"Error: Could not open video file: {args.source}")
+            pipeline.stop()
+            return
+    else:
+        # Connect to Synology
+        cs = CameraSource(SYNOLOGY_CONFIG)
+        ss = cs.connect()
 
-    # Get stream URL
-    stream_url = cs.get_camera_stream_url(ss, camera_id)
-    print(json.dumps(stream_url))
-    print(f"Stream URL: {stream_url}")
+        # Get stream URL
+        stream_url = cs.get_camera_stream_url(ss, camera_id)
+        print(json.dumps(stream_url))
+        print(f"Stream URL: {stream_url}")
 
-    # Open video stream
-    # Force RTSP over TCP to avoid UDP packet-loss artifacts
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-    print("Opening video stream...")
-    cap = None
+        # Force RTSP over TCP to avoid UDP packet-loss artifacts
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        print("Opening video stream...")
+        cap = None
 
-    if 'rtspPath' in stream_url:
-        print("trying RTSP over TCP (full resolution)...")
-        cap = cv2.VideoCapture(stream_url['rtspPath'], cv2.CAP_FFMPEG)
+        if 'rtspPath' in stream_url:
+            print("trying RTSP over TCP (full resolution)...")
+            cap = cv2.VideoCapture(stream_url['rtspPath'], cv2.CAP_FFMPEG)
 
-    if not cap or not cap.isOpened():
-        if 'rtspOverHttpPath' in stream_url:
-            print("trying RTSP over HTTP...")
-            cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'], cv2.CAP_FFMPEG)
+        if not cap or not cap.isOpened():
+            if 'rtspOverHttpPath' in stream_url:
+                print("trying RTSP over HTTP...")
+                cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'], cv2.CAP_FFMPEG)
 
-    if not cap or not cap.isOpened():
-        print("Falling back to MJPEG...")
-        cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
+        if not cap or not cap.isOpened():
+            print("Falling back to MJPEG...")
+            cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
 
-    if not cap.isOpened():
-        print("Error: Could not open video stream")
-        pipeline.stop()
-        return
+        if not cap.isOpened():
+            print("Error: Could not open video stream")
+            pipeline.stop()
+            return
 
-    # Minimize internal buffer so we always get the latest frame
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Minimize internal buffer so we always get the latest frame
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
 
-    print(f"Stream opened: {width}x{height} @ {fps}fps")
+    source_label = args.source if is_file else "stream"
+    print(f"Opened {source_label}: {width}x{height} @ {fps}fps")
 
-    # Start background frame reader so network I/O never blocks the loop
-    reader = FrameReader(cap).start()
+    # Background frame reader for live streams (not needed for files)
+    reader = None
+    if not is_file:
+        reader = FrameReader(cap).start()
 
-    # Video writer setup
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Video writer setup — AVI + MJPEG so files are playable even if
+    # the process is killed before the writer is properly released.
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     out = None
     clip_start_time = time.time()
     clip_number = 0
@@ -266,7 +287,7 @@ def main():
         nonlocal out, clip_start_time, clip_number
         clip_number += 1
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{OUTPUT_DIR}/detection_{timestamp}_{clip_number:04d}.mp4"
+        filename = f"{OUTPUT_DIR}/detection_{timestamp}_{clip_number:04d}.avi"
         out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
         clip_start_time = time.time()
         print(f"Recording: {filename}")
@@ -279,10 +300,19 @@ def main():
 
     try:
         while True:
-            ret, frame = reader.read()
-            if not ret or frame is None:
-                time.sleep(0.01)
-                continue
+            if reader:
+                ret, frame = reader.read()
+                if not ret or frame is None:
+                    time.sleep(0.01)
+                    continue
+            else:
+                ret, frame = cap.read()
+                if not ret:
+                    if is_file and args.loop:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        continue
+                    print("End of video file.")
+                    break
 
             frame_count += 1
 
@@ -319,7 +349,9 @@ def main():
             # Display frame (optional - comment out for headless)
             cv2.imshow("Surveillance Detection", annotated_frame)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            # Pace file playback to original fps; live streams use 1ms
+            wait_ms = max(1, int(1000 / fps)) if is_file else 1
+            if cv2.waitKey(wait_ms) & 0xFF == ord('q'):
                 break
 
     except KeyboardInterrupt:
@@ -327,7 +359,8 @@ def main():
 
     finally:
         # Cleanup
-        reader.stop()
+        if reader:
+            reader.stop()
         pipeline.stop()
         if out:
             out.release()
