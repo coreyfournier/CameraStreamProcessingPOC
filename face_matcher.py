@@ -1,10 +1,10 @@
 """Face matching against a known-faces encoding database.
 
-Listens for ``"person_detected"`` events, runs ``face_recognition`` to
-identify people, and emits ``"face_matched"`` events with results.
+Listens for ``"person_detected"`` events, runs ``facenet-pytorch`` (MTCNN +
+InceptionResnetV1) to identify people, and emits ``"face_matched"`` events.
 
-Gracefully degrades when dlib / face_recognition are not installed —
-the listener becomes a silent no-op.
+Gracefully degrades when facenet-pytorch is not installed — the listener
+becomes a silent no-op.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from events import (
     EventEmitter,
@@ -26,7 +27,8 @@ from events import (
 # ── Optional dependency guard ───────────────────────────────────────
 
 try:
-    import face_recognition
+    import torch
+    from facenet_pytorch import MTCNN, InceptionResnetV1
 
     FACE_RECOGNITION_AVAILABLE = True
 except ImportError:
@@ -44,7 +46,8 @@ class FaceMatcher(EventEmitter):
     encodings_path : str | Path
         Path to ``encodings.pkl`` produced by ``ExportLightroomFaces.py``.
     tolerance : float
-        Maximum face distance to consider a match (lower = stricter).
+        Maximum L2 distance between 512-d embeddings to consider a match
+        (lower = stricter). Typical range: 0.7–1.1; default 0.9.
     min_detection_confidence : float
         Ignore person detections below this confidence.
     """
@@ -52,7 +55,7 @@ class FaceMatcher(EventEmitter):
     def __init__(
         self,
         encodings_path: str | Path = "./faces/encodings.pkl",
-        tolerance: float = 0.6,
+        tolerance: float = 0.9,
         min_detection_confidence: float = 0.5,
     ) -> None:
         super().__init__()
@@ -64,7 +67,7 @@ class FaceMatcher(EventEmitter):
 
         if not FACE_RECOGNITION_AVAILABLE:
             print(
-                "WARNING: face_recognition not installed — "
+                "WARNING: facenet-pytorch not installed — "
                 "face matching disabled (person detection still works)"
             )
             return
@@ -89,6 +92,12 @@ class FaceMatcher(EventEmitter):
         if not self.known_encodings:
             print("WARNING: encodings file is empty — face matching disabled")
             return
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._mtcnn = MTCNN(keep_all=False, device=device)
+        self._model = InceptionResnetV1(pretrained="vggface2").eval().to(device)
+        self._device = device
+        self._known_matrix = np.array(self.known_encodings)  # (N, 512) for fast batch distance
 
         self.available = True
         print(
@@ -128,13 +137,13 @@ class FaceMatcher(EventEmitter):
                 face_location=None,
             )
 
-        # Convert BGR (OpenCV) → RGB (face_recognition)
-        rgb_crop = cv2.cvtColor(det.person_crop, cv2.COLOR_BGR2RGB)
+        # Convert BGR (OpenCV) → PIL RGB (facenet-pytorch)
+        pil_crop = Image.fromarray(cv2.cvtColor(det.person_crop, cv2.COLOR_BGR2RGB))
 
-        # Detect faces within the person crop
-        face_locations = face_recognition.face_locations(rgb_crop, model="hog")
+        # Detect and align the most prominent face; returns (3,160,160) tensor or None
+        face_tensor = self._mtcnn(pil_crop)
 
-        if not face_locations:
+        if face_tensor is None:
             return FaceMatchResult(
                 person_detection=det,
                 matched=False,
@@ -143,28 +152,16 @@ class FaceMatcher(EventEmitter):
                 face_location=None,
             )
 
-        # Use the largest face (by area) if multiple are found
-        largest = max(
-            face_locations,
-            key=lambda loc: (loc[2] - loc[0]) * (loc[1] - loc[3]),
-        )
-
-        encodings = face_recognition.face_encodings(
-            rgb_crop, known_face_locations=[largest]
-        )
-        if not encodings:
-            return FaceMatchResult(
-                person_detection=det,
-                matched=False,
-                person_name="Unknown",
-                confidence=0.0,
-                face_location=largest,
+        # Compute 512-d embedding
+        with torch.no_grad():
+            embedding = (
+                self._model(face_tensor.unsqueeze(0).to(self._device))
+                .cpu()
+                .numpy()[0]
             )
 
-        # Compare against all known encodings
-        distances = face_recognition.face_distance(
-            self.known_encodings, encodings[0]
-        )
+        # L2 distances against all known encodings
+        distances = np.linalg.norm(self._known_matrix - embedding, axis=1)
         best_idx = int(np.argmin(distances))
         best_distance = float(distances[best_idx])
 
@@ -174,7 +171,7 @@ class FaceMatcher(EventEmitter):
                 matched=True,
                 person_name=self.known_names[best_idx],
                 confidence=1.0 - best_distance,
-                face_location=largest,
+                face_location=None,
             )
 
         return FaceMatchResult(
@@ -182,5 +179,5 @@ class FaceMatcher(EventEmitter):
             matched=False,
             person_name="Unknown",
             confidence=1.0 - best_distance,
-            face_location=largest,
+            face_location=None,
         )

@@ -1,7 +1,10 @@
-opencv-python
-synology_api
-python-dotenv
-Pillow
-ultralytics
-face_recognition
-dlib
+opencv-python==4.10.0.84
+synology_api==0.8.2
+python-dotenv==1.2.1
+Pillow==12.1.1
+ultralytics==8.4.19
+torch==2.10.0
+torchvision==0.25.0
+# facenet-pytorch must be installed with --no-deps on Python 3.13 (its numpy<2.0 constraint has no wheel for 3.13)
+# pip install facenet-pytorch==2.6.0 --no-deps
+facenet-pytorch==2.6.0

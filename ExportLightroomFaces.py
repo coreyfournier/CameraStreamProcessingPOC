@@ -1,7 +1,7 @@
 """Export named faces from an Adobe Lightroom Classic catalog (.lrcat).
 
 Reads the SQLite catalog, crops face regions from source photos, and
-optionally computes 128-d face encodings for real-time matching.
+optionally computes 512-d face encodings (via facenet-pytorch) for real-time matching.
 """
 
 import argparse
@@ -45,7 +45,7 @@ def parse_args():
     )
     p.add_argument(
         "--skip-encodings", action="store_true",
-        help="Skip computing face encodings (useful if dlib is not installed)."
+        help="Skip computing face encodings (requires facenet-pytorch)."
     )
     p.add_argument(
         "--root-remap", action="append", default=[], metavar="SRC=>DST",
@@ -243,18 +243,25 @@ def sanitize_name(name):
 
 
 def compute_encodings(output_dir):
-    """Walk person directories, compute 128-d face encodings, save as pickle.
+    """Walk person directories, compute 512-d face encodings, save as pickle.
 
-    Requires the face_recognition library (and dlib).
+    Uses facenet-pytorch (MTCNN + InceptionResnetV1) — no compilation required.
+    Falls back to encoding the whole crop when MTCNN finds no face.
     """
     try:
-        import face_recognition
+        import torch
+        from facenet_pytorch import MTCNN, InceptionResnetV1
     except ImportError:
-        print("Error: face_recognition library not available. "
-              "Install it or use --skip-encodings.")
+        print("Error: facenet-pytorch not available. "
+              "Install it with 'pip install facenet-pytorch' or use --skip-encodings.")
         return False
 
     import pickle
+    import torchvision.transforms.functional as TF
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    mtcnn = MTCNN(keep_all=False, image_size=160, device=device)
+    model = InceptionResnetV1(pretrained="vggface2").eval().to(device)
 
     output_dir = Path(output_dir)
     encodings_dict = {}
@@ -268,17 +275,19 @@ def compute_encodings(output_dir):
 
         face_files = sorted(person_dir.glob("face_*.jpg"))
         for face_file in face_files:
-            img = face_recognition.load_image_file(str(face_file))
-            encs = face_recognition.face_encodings(img)
-            if encs:
-                person_encodings.append(encs[0])
-            else:
-                # Use the whole crop as the face if detection fails
-                encs = face_recognition.face_encodings(img, known_face_locations=[
-                    (0, img.shape[1], img.shape[0], 0)  # top, right, bottom, left
-                ])
-                if encs:
-                    person_encodings.append(encs[0])
+            img = Image.open(str(face_file)).convert("RGB")
+
+            # Try MTCNN detection first; fall back to whole crop if not found
+            face_tensor = mtcnn(img)
+            if face_tensor is None:
+                face_tensor = TF.to_tensor(img.resize((160, 160)))
+                face_tensor = (face_tensor - 0.5) / 0.5  # normalize to [-1, 1]
+
+            with torch.no_grad():
+                embedding = (
+                    model(face_tensor.unsqueeze(0).to(device)).cpu().numpy()[0]
+                )
+            person_encodings.append(embedding)
 
         if person_encodings:
             encodings_dict[person_name] = person_encodings
