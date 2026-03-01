@@ -42,6 +42,12 @@ def parse_args():
         help="Skip face crops smaller than this in either dimension (default: 50)."
     )
     p.add_argument(
+        "--include-suggested", action="store_true",
+        help="Also export suggested/unconfirmed faces (those Lightroom auto-detected "
+             "but you have not explicitly confirmed). By default only confirmed faces "
+             "are exported."
+    )
+    p.add_argument(
         "--skip-encodings", action="store_true",
         help="Skip computing face encodings (requires facenet-pytorch)."
     )
@@ -84,7 +90,7 @@ def main():
 
         # Query faces
         print("Querying named faces...")
-        faces = query_named_faces(conn, args.person)
+        faces = query_named_faces(conn, args.person, confirmed_only=not args.include_suggested)
         print(f"Found {len(faces)} face regions")
 
         if not faces:
