@@ -1,0 +1,1 @@
+from application.detection_pipeline import DetectionPipeline

@@ -13,16 +13,16 @@ import threading
 import time
 from typing import Callable
 
-from events import (
-    EventEmitter,
+from shared.event_emitter import EventEmitter
+from domain.detection.events import (
     FaceMatchEvent,
     FaceMatchResult,
     FrameContext,
     PersonDetection,
     PersonDetectionEvent,
 )
-from face_matcher import FaceMatcher
-from person_detector import PersonDetector
+from infrastructure.detection.facenet_face_matcher import FaceMatcher
+from infrastructure.detection.yolo_person_detector import PersonDetector
 
 
 # ── Async wrapper ───────────────────────────────────────────────────

@@ -38,7 +38,7 @@ RUN useradd --create-home appuser
 USER appuser
 WORKDIR /app
 
-COPY ExportLightroomFaces.py .
+COPY . .
 
 ENTRYPOINT ["python", "ExportLightroomFaces.py"]
 CMD ["--help"]

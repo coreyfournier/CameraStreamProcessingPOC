@@ -28,9 +28,36 @@ There are no tests, linting, or CI/CD configured.
 
 ## Architecture
 
-**CameraSource.py** — Synology Surveillance Station client wrapper. Handles connection, camera enumeration, stream URL retrieval, and URL fixup (the NAS sometimes returns incorrect protocol/port in stream URLs, so `fixAddress()` corrects them).
+The project is organized into DDD-style layers:
 
-**ReadFromStreamPoc2.py** — Main entry point. Connects to Synology via `CameraSource` (or reads a video file via `--source`), reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to AVI clips (30-second segments) in `./recordings/`.
+```
+domain/          — Pure value objects, no dependencies on infrastructure
+shared/          — Cross-cutting utilities (EventEmitter)
+infrastructure/  — External integrations (camera, detection models, recording)
+application/     — Orchestration and use-case logic
+interfaces/      — CLI entry points (main() + parse_args())
+```
+
+Root `ReadFromStreamPoc2.py` and `ExportLightroomFaces.py` are 3-line shims for backward compatibility.
+
+### Entry points
+
+**ReadFromStreamPoc2.py** → **interfaces/watch_stream.py** — Main entry point. Connects to Synology via `CameraSource` (or reads a video file via `--source`), reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to AVI clips (30-second segments) in `./recordings/`.
+
+**ExportLightroomFaces.py** → **interfaces/export_faces.py** — Standalone CLI tool that extracts named faces from an Adobe Lightroom Classic catalog (`.lrcat` SQLite database). Crops face regions from source photos (handling EXIF orientation), saves them organized by person name, and optionally computes 512-d face encodings via `facenet-pytorch` for real-time matching.
+
+```bash
+# Export all faces (without encodings — no dlib needed)
+python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --output ./faces/ --skip-encodings
+
+# Export a specific person with encodings
+python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --person "John Smith"
+
+# Full options
+python ExportLightroomFaces.py --catalog <path> [--output ./faces/] [--person "Name"] [--padding 40] [--min-size 50] [--skip-encodings] [--root-remap "SRC=>DST"]
+```
+
+Output structure: `faces/<Person_Name>/face_<face_id>.jpg`, `faces/encodings.pkl`, `faces/export_log.json`. Face filenames use Lightroom's stable `face_id` so subsequent runs skip already-exported faces.
 
 ### Event-driven detection pipeline
 
@@ -45,30 +72,31 @@ Frame → PersonDetector ──emits "person_detected"──→ FaceMatcher ─�
          yellow "Person" boxes                    and upgrades to green "Name" boxes
 ```
 
-**events.py** — Dataclasses (`FrameContext`, `PersonDetection`, `PersonDetectionEvent`, `FaceMatchResult`, `FaceMatchEvent`) and a thread-safe `EventEmitter` with `on()`/`off()`/`emit()`.
+### Key files
 
-**person_detector.py** — Wraps YOLOv8 nano (`yolov8n.pt`, auto-downloaded on first run). Filters to COCO class 0 (person) only. YOLOv8's 640x640 input with feature pyramid network handles multi-scale detection natively, so high-resolution frames (e.g. 2304x1296) don't need tiling. `process_frame()` returns detections synchronously AND emits `"person_detected"` events with cropped person images.
+**domain/detection/events.py** — Dataclasses: `FrameContext`, `PersonDetection`, `PersonDetectionEvent`, `FaceMatchResult`, `FaceMatchEvent`.
 
-**face_matcher.py** — Listens for person detections, runs `face_recognition` to match against `encodings.pkl` from `ExportLightroomFaces.py`. Emits `"face_matched"` events. Gracefully degrades if dlib/face_recognition are not installed (becomes a no-op).
+**shared/event_emitter.py** — Thread-safe `EventEmitter` with `on()`/`off()`/`emit()`.
 
-**detection_pipeline.py** — Orchestrator with `AsyncFaceMatcherWrapper` (background thread, bounded queue, frame skipping) and `DetectionPipeline` that wires everything together. Exposes `process_frame()` (synchronous), `get_latest_matches()` (non-blocking poll), and `on_face_matched()` (register external listeners).
+**infrastructure/detection/yolo_person_detector.py** — `PersonDetector`: wraps YOLOv8 nano (`yolov8n.pt`, auto-downloaded on first run). Filters to COCO class 0 (person) only. `process_frame()` returns detections synchronously AND emits `"person_detected"` events with cropped person images.
+
+**infrastructure/detection/facenet_face_matcher.py** — `FaceMatcher`: listens for person detections, runs `facenet-pytorch` to match against `encodings.pkl`. Emits `"face_matched"` events. Gracefully degrades if facenet-pytorch is not installed (becomes a no-op).
+
+**infrastructure/camera/synology_camera_source.py** — `CameraSource`: Synology Surveillance Station client wrapper. Handles connection, camera enumeration, stream URL retrieval, and URL fixup.
+
+**infrastructure/camera/opencv_frame_reader.py** — `OpenCVFrameReader`: reads RTSP frames on a background thread, retaining only the most recent frame.
+
+**infrastructure/recording/avi_clip_writer.py** — `AviClipWriter`: encapsulates OpenCV VideoWriter, auto-rotates clips every N seconds, generates timestamped filenames.
+
+**application/detection_pipeline.py** — `AsyncFaceMatcherWrapper` (background thread, bounded queue, frame skipping) and `DetectionPipeline` that wires everything together. Exposes `process_frame()` (synchronous), `get_latest_matches()` (non-blocking poll), and `on_face_matched()` (register external listeners).
+
+**application/stream_processor.py** — `draw_detections()`, `_associate_matches()`, and box-geometry helpers.
+
+**application/catalog_exporter.py** — All face export functions: `open_catalog()`, `query_named_faces()`, `resolve_image_path()`, `load_image_with_orientation()`, `crop_face()`, `sanitize_name()`, `compute_encodings()`, `save_export_log()`.
 
 **ReadFromStreamPoc1.py** — Simpler CLI alternative that takes an RTSP URL directly (no Synology integration). Useful for testing detection against any RTSP source.
 
-**ExportLightroomFaces.py** — Standalone CLI tool that extracts named faces from an Adobe Lightroom Classic catalog (`.lrcat` SQLite database). Crops face regions from source photos (handling EXIF orientation), saves them organized by person name, and optionally computes 128-d face encodings via `face_recognition` for real-time matching.
-
-```bash
-# Export all faces (without encodings — no dlib needed)
-python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --output ./faces/ --skip-encodings
-
-# Export a specific person with encodings
-python ExportLightroomFaces.py --catalog "path/to/My Catalog.lrcat" --person "John Smith"
-
-# Full options
-python ExportLightroomFaces.py --catalog <path> [--output ./faces/] [--person "Name"] [--padding 40] [--min-size 50] [--skip-encodings] [--root-remap "SRC=>DST"]
-```
-
-Output structure: `faces/<Person_Name>/face_<face_id>.jpg`, `faces/encodings.pkl`, `faces/export_log.json`. Face filenames use Lightroom's stable `face_id` so subsequent runs skip already-exported faces.
+**MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Used only by `ReadFromStreamPoc1.py` (the legacy RTSP script). The main pipeline (`ReadFromStreamPoc2.py`) uses YOLOv8 instead.
 
 ### Docker workflow (recommended for face encodings)
 
@@ -98,8 +126,6 @@ Docker volume mounts:
 
 The `--root-remap` flag translates catalog paths (e.g. `X:/2022/photo.jpg`) to container paths (e.g. `/photos/2022/photo.jpg`). Can be specified multiple times for multiple roots.
 
-**MobileNetSSN/** — Pre-trained MobileNet-SSD Caffe model files (prototxt + caffemodel). Used only by `ReadFromStreamPoc1.py` (the legacy RTSP script). The main pipeline (`ReadFromStreamPoc2.py`) uses YOLOv8 instead.
-
 ## Environment Configuration
 
 Synology credentials are loaded from `.env` (not committed):
@@ -107,4 +133,4 @@ Synology credentials are loaded from `.env` (not committed):
 - `port` — Surveillance Station port (5001 for HTTPS)
 - `username` / `password` — NAS credentials
 
-Hardcoded settings in ReadFromStreamPoc2.py: `CAMERA_ID`, `DETECTION_CONFIDENCE`, `RECORD_DURATION`, `ENCODINGS_PATH`, `MATCH_SKIP_FRAMES`, `MATCH_TOLERANCE`, `MATCH_MIN_CONFIDENCE`, SSL options (`secure`, `cert_verify`, `dsm_version`).
+Hardcoded settings in `interfaces/watch_stream.py`: `CAMERA_ID`, `DETECTION_CONFIDENCE`, `RECORD_DURATION`, `ENCODINGS_PATH`, `MATCH_SKIP_FRAMES`, `MATCH_TOLERANCE`, `MATCH_MIN_CONFIDENCE`, SSL options (`secure`, `cert_verify`, `dsm_version`).

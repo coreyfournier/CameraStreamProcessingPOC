@@ -11,8 +11,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from events import (
-    EventEmitter,
+from shared.event_emitter import EventEmitter
+from domain.detection.events import (
     FrameContext,
     PersonDetection,
     PersonDetectionEvent,
