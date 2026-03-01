@@ -242,11 +242,12 @@ def sanitize_name(name):
     return safe or "Unknown"
 
 
-def compute_encodings(output_dir):
+def compute_encodings(output_dir, batch_size=64):
     """Walk person directories, compute 512-d face encodings, save as pickle.
 
     Uses facenet-pytorch (MTCNN + InceptionResnetV1) — no compilation required.
     Falls back to encoding the whole crop when MTCNN finds no face.
+    Processes images in batches for significantly faster CPU/GPU throughput.
     """
     try:
         import torch
@@ -263,32 +264,62 @@ def compute_encodings(output_dir):
     mtcnn = MTCNN(keep_all=False, image_size=160, device=device)
     model = InceptionResnetV1(pretrained="vggface2").eval().to(device)
 
+    # Fallback transform: resize whole crop to 160x160 and normalize to [-1, 1]
+    def fallback_tensor(img):
+        t = TF.to_tensor(img.resize((160, 160)))
+        return (t - 0.5) / 0.5
+
     output_dir = Path(output_dir)
     encodings_dict = {}
     total = 0
 
-    for person_dir in sorted(output_dir.iterdir()):
-        if not person_dir.is_dir():
-            continue
+    # Collect all face files across all persons so we can count progress
+    all_person_dirs = [d for d in sorted(output_dir.iterdir()) if d.is_dir()]
+    all_files = [(d, f) for d in all_person_dirs for f in sorted(d.glob("face_*.jpg"))]
+    n_total = len(all_files)
+    print(f"Computing embeddings for {n_total} face images across "
+          f"{len(all_person_dirs)} people (batch_size={batch_size})...")
+
+    # MTCNN requires equal-dimension images for batch mode, but Lightroom crops
+    # vary in size. So run MTCNN individually, then batch InceptionResnetV1
+    # (all MTCNN outputs are 160x160, so embedding batching works fine).
+    file_to_embedding = {}
+    tensor_batch: list[torch.Tensor] = []
+    file_batch: list[str] = []
+
+    def flush_embedding_batch():
+        if not tensor_batch:
+            return
+        batch_tensor = torch.stack(tensor_batch).to(device)
+        with torch.no_grad():
+            embeddings = model(batch_tensor).cpu().numpy()
+        for fpath, emb in zip(file_batch, embeddings):
+            file_to_embedding[fpath] = emb
+        tensor_batch.clear()
+        file_batch.clear()
+
+    for i, (_, face_file) in enumerate(all_files):
+        img = Image.open(str(face_file)).convert("RGB")
+
+        ft = mtcnn(img)
+        tensor_batch.append(ft if ft is not None else fallback_tensor(img))
+        file_batch.append(str(face_file))
+
+        if len(tensor_batch) >= batch_size:
+            flush_embedding_batch()
+            print(f"  {i + 1}/{n_total} images processed...", flush=True)
+
+    flush_embedding_batch()
+    print(f"  {n_total}/{n_total} images processed.", flush=True)
+
+    # Reassemble per-person
+    for person_dir in all_person_dirs:
         person_name = person_dir.name.replace('_', ' ')
-        person_encodings = []
-
-        face_files = sorted(person_dir.glob("face_*.jpg"))
-        for face_file in face_files:
-            img = Image.open(str(face_file)).convert("RGB")
-
-            # Try MTCNN detection first; fall back to whole crop if not found
-            face_tensor = mtcnn(img)
-            if face_tensor is None:
-                face_tensor = TF.to_tensor(img.resize((160, 160)))
-                face_tensor = (face_tensor - 0.5) / 0.5  # normalize to [-1, 1]
-
-            with torch.no_grad():
-                embedding = (
-                    model(face_tensor.unsqueeze(0).to(device)).cpu().numpy()[0]
-                )
-            person_encodings.append(embedding)
-
+        person_encodings = [
+            file_to_embedding[str(f)]
+            for f in sorted(person_dir.glob("face_*.jpg"))
+            if str(f) in file_to_embedding
+        ]
         if person_encodings:
             encodings_dict[person_name] = person_encodings
             total += len(person_encodings)

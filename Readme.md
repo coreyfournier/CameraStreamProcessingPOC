@@ -202,3 +202,15 @@ python ReadFromStreamPoc1.py \
 ```
 
 Note: this alternative script does not include the event-driven pipeline or face matching.
+
+## TODO
+
+Issues observed during testing:
+
+- **Low face detection rate in person crops** — MTCNN frequently fails to detect a face within the YOLO person bounding box (person too far from camera, facing away, partially occluded). When MTCNN finds no face, the whole crop is resized as a fallback, which produces poor embeddings. Consider using a wider/padded crop region or a lighter face detector with a lower confidence threshold.
+
+- **Tolerance may be too loose** — `MATCH_TOLERANCE = 0.9` produced suspected false positives (e.g. Eli Ellsworth matched when the person's face was not clearly visible). Try tightening to `0.7`–`0.8` and evaluate accuracy vs. miss rate.
+
+- **Inconsistent matches across frames** — the same person receives different name labels across nearby frames (e.g. Kate Fournier → Keith Fournier → Eli Ellsworth within seconds). Could be improved by temporal smoothing: accumulate match results over a short window and report the majority-vote name.
+
+- **README is outdated** — still references MobileNet-SSD, dlib, `face_recognition`, 128-d encodings, and Docker as the recommended encoding workflow. All of these have been replaced by YOLOv8 and `facenet-pytorch`; the README needs a full update to reflect the current stack.

@@ -38,9 +38,9 @@ DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
 RECORD_DURATION = 30                   # Seconds per video clip
 
 # Face matching settings
-ENCODINGS_PATH = "./faces/encodings.pkl"  # Path to face encodings database
-MATCH_SKIP_FRAMES = 5                     # Attempt face match every Nth person-detection frame
-MATCH_TOLERANCE = 0.6                     # Max face distance for a match (lower = stricter)
+ENCODINGS_PATH = "./faces-output/encodings.pkl"  # Path to face encodings database
+MATCH_SKIP_FRAMES = 5                           # Attempt face match every Nth person-detection frame
+MATCH_TOLERANCE = 0.9                           # Max face distance for a match (lower = stricter)
 MATCH_MIN_CONFIDENCE = 0.5               # Ignore person detections below this for matching
 
 # Colors (BGR)
