@@ -189,19 +189,6 @@ Frame --> PersonDetector --emits "person_detected"--> FaceMatcher --emits "face_
 - The main loop polls the latest match results each frame and associates them to current detections by bounding box proximity (since async results may be from a slightly earlier frame)
 - Frame skipping ensures the matcher only processes every Nth frame with people to bound CPU usage
 
-## Alternative: Direct RTSP (no Synology)
-
-For testing against any RTSP camera source without Synology integration:
-
-```bash
-python ReadFromStreamPoc1.py \
-    --rtsp rtsp://camera-ip:554/stream \
-    --proto MobileNetSSN/MobileNetSSD_deploy.prototxt \
-    --model MobileNetSSN/MobileNetSSD_deploy.caffemodel \
-    --out output.mp4
-```
-
-Note: this alternative script does not include the event-driven pipeline or face matching.
 
 ## TODO
 
