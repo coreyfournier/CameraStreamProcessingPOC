@@ -61,8 +61,18 @@ def open_catalog(catalog_path):
     return conn, temp_dir
 
 
-def query_named_faces(conn, person_filter=None):
+def query_named_faces(conn, person_filter=None, confirmed_only=False):
     """Query all named, non-rejected faces from the catalog.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+    person_filter : str | None
+        If set, only return faces for this exact person name.
+    confirmed_only : bool
+        If True, exclude suggested/unconfirmed faces (suggestedTag = 1).
+        Only faces the user explicitly confirmed in Lightroom's People view
+        will be returned.
 
     Returns a list of dicts with keys:
         name, face_id, tl_x, tl_y, br_x, br_y,
@@ -91,6 +101,8 @@ def query_named_faces(conn, person_filter=None):
           AND kw.name != ''
           AND (kwf.userReject IS NULL OR kwf.userReject != 1)
     """
+    if confirmed_only:
+        sql += "  AND (kwf.suggestedTag IS NULL OR kwf.suggestedTag != 1)\n"
     params = []
     if person_filter:
         sql += " AND kw.name = ?"
