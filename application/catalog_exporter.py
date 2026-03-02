@@ -102,7 +102,7 @@ def query_named_faces(conn, person_filter=None, confirmed_only=False):
           AND (kwf.userReject IS NULL OR kwf.userReject != 1)
     """
     if confirmed_only:
-        sql += "  AND (kwf.suggestedTag IS NULL OR kwf.suggestedTag != 1)\n"
+        sql += "  AND kwf.userPick = 1\n"
     params = []
     if person_filter:
         sql += " AND kw.name = ?"

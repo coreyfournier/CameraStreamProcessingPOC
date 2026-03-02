@@ -39,10 +39,7 @@ python ReadFromStreamPoc2.py
 If you just want the cropped face images without encodings (useful for inspection or if you'll compute encodings separately):
 
 ```bash
-python ExportLightroomFaces.py \
-    --catalog "C:/Users/you/Pictures/Lightroom/My Catalog.lrcat" \
-    --output ./faces/ \
-    --skip-encodings
+python ExportLightroomFaces.py --catalog "C:/Users/you/Pictures/Lightroom/My Catalog.lrcat" --output ./faces-output/ --skip-encodings
 ```
 
 ### Option B: Export with encodings via Docker (recommended on Windows)
