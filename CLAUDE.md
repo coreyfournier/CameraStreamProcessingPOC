@@ -42,7 +42,7 @@ Root `ReadFromStreamPoc2.py` and `ExportLightroomFaces.py` are 3-line shims for 
 
 ### Entry points
 
-**ReadFromStreamPoc2.py** → **interfaces/watch_stream.py** — Main entry point. Connects to Synology via `CameraSource` (or reads a video file via `--source`), reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to AVI clips (30-second segments) in `./recordings/`.
+**ReadFromStreamPoc2.py** → **interfaces/watch_stream.py** — Main entry point. Connects to a camera source (`SynologyCameraSource` or `OnvifCameraSource`, selected via `--source-type`) or reads a video file via `--source`, reads frames in a loop, runs person detection and optional face matching via `DetectionPipeline`, draws annotated bounding boxes (green for matched faces, yellow for unknown people), and writes output to AVI clips (30-second segments) in `./recordings/`.
 
 **ExportLightroomFaces.py** → **interfaces/export_faces.py** — Standalone CLI tool that extracts named faces from an Adobe Lightroom Classic catalog (`.lrcat` SQLite database). Crops face regions from source photos (handling EXIF orientation), saves them organized by person name, and optionally computes 512-d face encodings via `facenet-pytorch` for real-time matching.
 
@@ -82,7 +82,9 @@ Frame → PersonDetector ──emits "person_detected"──→ FaceMatcher ─�
 
 **infrastructure/detection/facenet_face_matcher.py** — `FaceMatcher`: listens for person detections, runs `facenet-pytorch` to match against `encodings.pkl`. Emits `"face_matched"` events. Gracefully degrades if facenet-pytorch is not installed (becomes a no-op).
 
-**infrastructure/camera/synology_camera_source.py** — `CameraSource`: Synology Surveillance Station client wrapper. Handles connection, camera enumeration, stream URL retrieval, and URL fixup.
+**infrastructure/camera/synology_camera_source.py** — `SynologyCameraSource`: Synology Surveillance Station client wrapper. `open(camera_id)` encapsulates the RTSP/MJPEG fallback chain and returns a `cv2.VideoCapture`. Also handles connection, camera enumeration, stream URL retrieval, and URL fixup.
+
+**infrastructure/camera/onvif_camera_source.py** — `OnvifCameraSource`: ONVIF camera client (via `onvif-zeep`). `open(profile_index)` retrieves an RTSP URI from the camera's media service, injects credentials, and returns a `cv2.VideoCapture`.
 
 **infrastructure/camera/opencv_frame_reader.py** — `OpenCVFrameReader`: reads RTSP frames on a background thread, retaining only the most recent frame.
 
@@ -128,9 +130,16 @@ The `--root-remap` flag translates catalog paths (e.g. `X:/2022/photo.jpg`) to c
 
 ## Environment Configuration
 
-Synology credentials are loaded from `.env` (not committed):
-- `ip_address` — NAS hostname/IP
-- `port` — Surveillance Station port (5001 for HTTPS)
-- `username` / `password` — NAS credentials
+Credentials are loaded from `.env` (not committed):
+
+**Synology:**
+- `SYNOLOGY_IP` — NAS hostname/IP
+- `SYNOLOGY_PORT` — Surveillance Station port (5001 for HTTPS)
+- `SYNOLOGY_USERNAME` / `SYNOLOGY_PASSWORD` — NAS credentials
+
+**ONVIF:**
+- `ONVIF_IP` — Camera IP address
+- `ONVIF_PORT` — ONVIF device port (80 or 8000 are common)
+- `ONVIF_USERNAME` / `ONVIF_PASSWORD` — Camera credentials
 
 Hardcoded settings in `interfaces/watch_stream.py`: `CAMERA_ID`, `DETECTION_CONFIDENCE`, `RECORD_DURATION`, `ENCODINGS_PATH`, `MATCH_SKIP_FRAMES`, `MATCH_TOLERANCE`, `MATCH_MIN_CONFIDENCE`, SSL options (`secure`, `cert_verify`, `dsm_version`).

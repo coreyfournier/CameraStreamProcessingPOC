@@ -1,12 +1,11 @@
 """
-Synology Surveillance Station Person Detection Script
-Connects to Surveillance Station, reads camera stream, detects people,
-optionally matches faces against a known-faces database, and records
-annotated video clips.
+Camera Stream Person Detection Script
+Connects to a camera source (Synology Surveillance Station or ONVIF), reads
+the stream, detects people, optionally matches faces against a known-faces
+database, and records annotated video clips.
 """
 
 import argparse
-import json
 import os
 import time
 
@@ -17,7 +16,8 @@ from application.detection_pipeline import DetectionPipeline
 from application.stream_processor import draw_detections
 from domain.detection.events import FaceMatchResult, PersonDetection
 from infrastructure.camera.opencv_frame_reader import OpenCVFrameReader
-from infrastructure.camera.synology_camera_source import CameraSource
+from infrastructure.camera.synology_camera_source import SynologyCameraSource
+from infrastructure.camera.onvif_camera_source import OnvifCameraSource
 from infrastructure.recording.avi_clip_writer import AviClipWriter
 
 load_dotenv()
@@ -32,6 +32,13 @@ SYNOLOGY_CONFIG = {
     "cert_verify": True,
     "dsm_version": 7,                  # DSM version (6 or 7)
     "otp_code": None                   # 2FA code if enabled
+}
+
+ONVIF_CONFIG = {
+    "ip": os.environ.get('ONVIF_IP'),
+    "port": os.environ.get('ONVIF_PORT', '80'),
+    "username": os.environ.get('ONVIF_USERNAME'),
+    "password": os.environ.get('ONVIF_PASSWORD'),
 }
 
 CAMERA_ID = 14                          # Default camera ID in Surveillance Station
@@ -61,6 +68,14 @@ def parse_args():
     parser.add_argument(
         "--loop", action="store_true",
         help="Loop the source video file when it ends (only with --source)",
+    )
+    parser.add_argument(
+        "--source-type", choices=["synology", "onvif"], default="synology",
+        help="Live camera source type (default: synology)",
+    )
+    parser.add_argument(
+        "--onvif-profile", type=int, default=0,
+        help="ONVIF media profile index to use (default: 0)",
     )
     return parser.parse_args()
 
@@ -93,40 +108,17 @@ def main():
             pipeline.stop()
             return
     else:
-        # Connect to Synology
-        cs = CameraSource(SYNOLOGY_CONFIG)
-        ss = cs.connect()
-
-        # Get stream URL
-        stream_url = cs.get_camera_stream_url(ss, camera_id)
-        print(json.dumps(stream_url))
-        print(f"Stream URL: {stream_url}")
-
-        # Force RTSP over TCP to avoid UDP packet-loss artifacts
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-        print("Opening video stream...")
-        cap = None
-
-        if 'rtspPath' in stream_url:
-            print("trying RTSP over TCP (full resolution)...")
-            cap = cv2.VideoCapture(stream_url['rtspPath'], cv2.CAP_FFMPEG)
-
-        if not cap or not cap.isOpened():
-            if 'rtspOverHttpPath' in stream_url:
-                print("trying RTSP over HTTP...")
-                cap = cv2.VideoCapture(stream_url['rtspOverHttpPath'], cv2.CAP_FFMPEG)
-
-        if not cap or not cap.isOpened():
-            print("Falling back to MJPEG...")
-            cap = cv2.VideoCapture(stream_url['mjpegHttpPath'])
-
-        if not cap.isOpened():
-            print("Error: Could not open video stream")
+        try:
+            if args.source_type == 'synology':
+                source = SynologyCameraSource(SYNOLOGY_CONFIG)
+                cap = source.open(camera_id)
+            else:
+                source = OnvifCameraSource(ONVIF_CONFIG)
+                cap = source.open(profile_index=args.onvif_profile)
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
             pipeline.stop()
             return
-
-        # Minimize internal buffer so we always get the latest frame
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15

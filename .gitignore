@@ -1,6 +1,6 @@
 .env
 .venv
-camera
+/camera
 recordings
 faces
 __pycache__
