@@ -77,6 +77,10 @@ def parse_args():
         "--onvif-profile", type=int, default=0,
         help="ONVIF media profile index to use (default: 0)",
     )
+    parser.add_argument(
+        "--no-record", action="store_true",
+        help="Disable saving annotated video clips to disk",
+    )
     return parser.parse_args()
 
 
@@ -84,8 +88,6 @@ def parse_args():
 def main():
     args = parse_args()
     camera_id = args.camera
-
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Initialise detection pipeline
     print("Initialising detection pipeline...")
@@ -134,13 +136,16 @@ def main():
         reader = OpenCVFrameReader(cap).start()
 
     # AVI clip writer — auto-rotates every RECORD_DURATION seconds
-    clip_writer = AviClipWriter(
-        output_dir=OUTPUT_DIR,
-        fps=fps,
-        width=width,
-        height=height,
-        clip_duration_seconds=RECORD_DURATION,
-    )
+    clip_writer = None
+    if not args.no_record:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        clip_writer = AviClipWriter(
+            output_dir=OUTPUT_DIR,
+            fps=fps,
+            width=width,
+            height=height,
+            clip_duration_seconds=RECORD_DURATION,
+        )
 
     print("Starting detection loop (press 'q' to quit)...")
     frame_count = 0
@@ -173,7 +178,8 @@ def main():
             annotated_frame = draw_detections(frame.copy(), detections, match_results)
 
             # Write to video file
-            clip_writer.write(annotated_frame)
+            if clip_writer:
+                clip_writer.write(annotated_frame)
 
             # Log detections
             if detections:
@@ -202,7 +208,8 @@ def main():
         if reader:
             reader.stop()
         pipeline.stop()
-        clip_writer.release()
+        if clip_writer:
+            clip_writer.release()
         cap.release()
         cv2.destroyAllWindows()
         print("Done!")
