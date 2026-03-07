@@ -44,7 +44,7 @@ recording:
   clip_duration: 30
 
 retention:
-  days: 30
+  days: 3
   cleanup_interval_hours: 24
 
 api:
