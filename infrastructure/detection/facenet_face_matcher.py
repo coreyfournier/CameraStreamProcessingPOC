@@ -135,21 +135,40 @@ class FaceMatcher(EventEmitter):
                 person_name="Unknown",
                 confidence=0.0,
                 face_location=None,
+                face_encoding=None,
             )
 
         # Convert BGR (OpenCV) → PIL RGB (facenet-pytorch)
         pil_crop = Image.fromarray(cv2.cvtColor(det.person_crop, cv2.COLOR_BGR2RGB))
 
-        # Detect and align the most prominent face; returns (3,160,160) tensor or None
-        face_tensor = self._mtcnn(pil_crop)
+        # Detect face bounding box(es) in the person crop
+        boxes, probs = self._mtcnn.detect(pil_crop)
 
-        if face_tensor is None:
+        if boxes is None or len(boxes) == 0:
             return FaceMatchResult(
                 person_detection=det,
                 matched=False,
                 person_name="Unknown",
                 confidence=0.0,
                 face_location=None,
+                face_encoding=None,
+            )
+
+        # Use the most prominent face (highest probability)
+        best_face_idx = int(np.argmax(probs))
+        x1, y1, x2, y2 = boxes[best_face_idx]
+        face_location = (int(y1), int(x2), int(y2), int(x1))  # (top, right, bottom, left)
+
+        # Get aligned face tensor for embedding
+        face_tensor = self._mtcnn(pil_crop)
+        if face_tensor is None:
+            return FaceMatchResult(
+                person_detection=det,
+                matched=False,
+                person_name="Unknown",
+                confidence=0.0,
+                face_location=face_location,
+                face_encoding=None,
             )
 
         # Compute 512-d embedding
@@ -160,24 +179,32 @@ class FaceMatcher(EventEmitter):
                 .numpy()[0]
             )
 
+        # Serialize embedding for storage
+        encoding_bytes = embedding.astype(np.float32).tobytes()
+
         # L2 distances against all known encodings
         distances = np.linalg.norm(self._known_matrix - embedding, axis=1)
         best_idx = int(np.argmin(distances))
         best_distance = float(distances[best_idx])
+
+        # Normalise confidence: 0.5 at tolerance boundary, 1.0 at distance 0
+        confidence = max(0.0, 1.0 - 0.5 * best_distance / self.tolerance)
 
         if best_distance <= self.tolerance:
             return FaceMatchResult(
                 person_detection=det,
                 matched=True,
                 person_name=self.known_names[best_idx],
-                confidence=1.0 - best_distance,
-                face_location=None,
+                confidence=confidence,
+                face_location=face_location,
+                face_encoding=encoding_bytes,
             )
 
         return FaceMatchResult(
             person_detection=det,
             matched=False,
             person_name="Unknown",
-            confidence=1.0 - best_distance,
-            face_location=None,
+            confidence=confidence,
+            face_location=face_location,
+            face_encoding=encoding_bytes,
         )

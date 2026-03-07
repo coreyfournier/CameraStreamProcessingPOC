@@ -113,7 +113,11 @@ class AsyncFaceMatcherWrapper(EventEmitter):
                 continue
             if event is None:  # Poison pill
                 break
-            self.matcher.on_person_detected(event)
+            try:
+                self.matcher.on_person_detected(event)
+            except Exception:
+                import traceback
+                traceback.print_exc()
 
     def _on_inner_match(self, event: FaceMatchEvent) -> None:
         """Store latest results and re-emit for external listeners."""

@@ -3,35 +3,29 @@ Camera Stream Person Detection Script
 Connects to a camera source (Synology Surveillance Station or ONVIF), reads
 the stream, detects people, optionally matches faces against a known-faces
 database, and records annotated video clips.
+
+Supports two modes:
+  1. Config-file mode (--config config.yaml) — reads all settings from YAML.
+  2. Legacy mode (no --config) — uses env vars and hardcoded defaults as before.
 """
 
 import argparse
 import os
-import time
 
-import cv2
 from dotenv import load_dotenv
-
-from application.detection_pipeline import DetectionPipeline
-from application.stream_processor import draw_detections
-from domain.detection.events import FaceMatchResult, PersonDetection
-from infrastructure.camera.opencv_frame_reader import OpenCVFrameReader
-from infrastructure.camera.synology_camera_source import SynologyCameraSource
-from infrastructure.camera.onvif_camera_source import OnvifCameraSource
-from infrastructure.recording.avi_clip_writer import AviClipWriter
 
 load_dotenv()
 
-# ============== CONFIGURATION ==============
+# ============== LEGACY DEFAULTS (used when no --config is provided) ==============
 SYNOLOGY_CONFIG = {
-    "ip_address": os.environ.get('SYNOLOGY_IP'),       # e.g., "192.168.1.100"
-    "port": os.environ.get('SYNOLOGY_PORT'),            # Default: 5000 (HTTP) or 5001 (HTTPS)
+    "ip_address": os.environ.get('SYNOLOGY_IP'),
+    "port": os.environ.get('SYNOLOGY_PORT'),
     "username": os.environ.get('SYNOLOGY_USERNAME'),
     "password": os.environ.get('SYNOLOGY_PASSWORD'),
-    "secure": True,                   # Set True for HTTPS
+    "secure": True,
     "cert_verify": True,
-    "dsm_version": 7,                  # DSM version (6 or 7)
-    "otp_code": None                   # 2FA code if enabled
+    "dsm_version": 7,
+    "otp_code": None,
 }
 
 ONVIF_CONFIG = {
@@ -41,21 +35,24 @@ ONVIF_CONFIG = {
     "password": os.environ.get('ONVIF_PASSWORD'),
 }
 
-CAMERA_ID = 14                          # Default camera ID in Surveillance Station
-OUTPUT_DIR = "./recordings"            # Output directory for videos
-DETECTION_CONFIDENCE = 0.5             # Minimum confidence threshold
-RECORD_DURATION = 30                   # Seconds per video clip
+CAMERA_ID = 14
+OUTPUT_DIR = "./recordings"
+DETECTION_CONFIDENCE = 0.5
+RECORD_DURATION = 30
 
-# Face matching settings
-ENCODINGS_PATH = "./faces-output/encodings.pkl"  # Path to face encodings database
-MATCH_SKIP_FRAMES = 5                           # Attempt face match every Nth person-detection frame
-MATCH_TOLERANCE = 0.9                           # Max face distance for a match (lower = stricter)
-MATCH_MIN_CONFIDENCE = 0.5               # Ignore person detections below this for matching
+ENCODINGS_PATH = "./faces-output/encodings.pkl"
+MATCH_SKIP_FRAMES = 5
+MATCH_TOLERANCE = 0.9
+MATCH_MIN_CONFIDENCE = 0.5
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Synology Surveillance Station person detection with optional face matching."
+        description="Camera stream person detection with optional face matching."
+    )
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="Path to YAML config file (default: None, uses env vars)",
     )
     parser.add_argument(
         "--camera", type=int, default=CAMERA_ID,
@@ -84,135 +81,156 @@ def parse_args():
     return parser.parse_args()
 
 
-# ============== MAIN PROCESSING LOOP ==============
+# ============== MAIN ==============
 def main():
     args = parse_args()
-    camera_id = args.camera
 
-    # Initialise detection pipeline
-    print("Initialising detection pipeline...")
-    pipeline = DetectionPipeline(
-        confidence_threshold=DETECTION_CONFIDENCE,
-        encodings_path=ENCODINGS_PATH,
-        match_tolerance=MATCH_TOLERANCE,
-        match_min_confidence=MATCH_MIN_CONFIDENCE,
-        match_skip_frames=MATCH_SKIP_FRAMES,
-    )
-    pipeline.start()
+    from application.camera_worker import CameraWorker
 
-    # Open video source (file or live stream)
-    is_file = args.source is not None
-    if is_file:
-        print(f"Opening video file: {args.source}")
-        cap = cv2.VideoCapture(args.source)
-        if not cap.isOpened():
-            print(f"Error: Could not open video file: {args.source}")
-            pipeline.stop()
-            return
-    else:
-        try:
-            if args.source_type == 'synology':
-                source = SynologyCameraSource(SYNOLOGY_CONFIG)
-                cap = source.open(camera_id)
-            else:
-                source = OnvifCameraSource(ONVIF_CONFIG)
-                cap = source.open(profile_index=args.onvif_profile)
-        except RuntimeError as exc:
-            print(f"Error: {exc}")
-            pipeline.stop()
-            return
+    if args.config:
+        # ── Config-file mode ─────────────────────────────────────────
+        from infrastructure.config import (
+            load_config,
+            get_camera_configs,
+            get_detection_config,
+            get_recording_config,
+            get_synology_config,
+            get_onvif_config,
+            get_redis_config,
+            get_storage_config,
+            get_smoothing_config,
+        )
+        from infrastructure.messaging.redis_stream_producer import RedisStreamProducer
+        from infrastructure.storage.person_image_storage import PersonImageStorage
+        from application.detection_smoother import IdentitySmoother
+        from domain.detection.events import PersonLogEntry
+        import uuid
+        from datetime import datetime
 
-    # Get video properties
-    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+        config = load_config(args.config)
+        detection_cfg = get_detection_config(config)
+        recording_cfg = get_recording_config(config)
+        synology_cfg = get_synology_config(config)
+        onvif_cfg = get_onvif_config(config)
+        redis_cfg = get_redis_config(config)
+        storage_cfg = get_storage_config(config)
+        smoothing_cfg = get_smoothing_config(config)
 
-    source_label = args.source if is_file else "stream"
-    print(f"Opened {source_label}: {width}x{height} @ {fps}fps")
+        # CLI overrides
+        if args.no_record:
+            recording_cfg["enabled"] = False
 
-    # Background frame reader for live streams (not needed for files)
-    reader = None
-    if not is_file:
-        reader = OpenCVFrameReader(cap).start()
+        cameras = get_camera_configs(config)
+        if not cameras:
+            cameras = [{
+                "id": args.camera,
+                "label": f"camera_{args.camera}",
+                "source_type": args.source_type,
+            }]
 
-    # AVI clip writer — auto-rotates every RECORD_DURATION seconds
-    clip_writer = None
-    if not args.no_record:
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        clip_writer = AviClipWriter(
-            output_dir=OUTPUT_DIR,
-            fps=fps,
-            width=width,
-            height=height,
-            clip_duration_seconds=RECORD_DURATION,
+        cam_cfg = cameras[0]
+
+        if args.camera != CAMERA_ID:
+            cam_cfg["id"] = args.camera
+        if args.source_type != "synology":
+            cam_cfg["source_type"] = args.source_type
+
+        # Set up Redis publishing + image storage
+        producer = RedisStreamProducer(
+            host=redis_cfg.get("host", "localhost"),
+            port=int(redis_cfg.get("port", 6379)),
+            stream_name=redis_cfg.get("stream_name", "person_detections"),
+        )
+        image_storage = PersonImageStorage(
+            base_dir=storage_cfg.get("person_images_dir", "./recordings/persons"),
+        )
+        smoother = IdentitySmoother(
+            window_size=smoothing_cfg.get("window_size", 10),
+            min_hit_ratio=smoothing_cfg.get("min_hit_ratio", 0.7),
+            min_avg_confidence=smoothing_cfg.get("min_avg_confidence", 0.7),
         )
 
-    print("Starting detection loop (press 'q' to quit)...")
-    frame_count = 0
+        camera_label = cam_cfg.get("label", f"camera_{cam_cfg.get('id', 0)}")
+        camera_id = cam_cfg.get("id", 0)
 
-    try:
-        while True:
-            if reader:
-                ret, frame = reader.read()
-                if not ret or frame is None:
-                    time.sleep(0.01)
-                    continue
-            else:
-                ret, frame = cap.read()
-                if not ret:
-                    if is_file and args.loop:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        continue
-                    print("End of video file.")
-                    break
+        def on_detection(label, detections, match_results):
+            smoothed = smoother.smooth(detections, match_results)
+            now_iso = datetime.now().isoformat()
+            for si in smoothed:
+                det_id = str(uuid.uuid4())
+                face_path, body_path = image_storage.save(
+                    detection_id=det_id,
+                    face_crop=None,
+                    body_crop=si.person_detection.person_crop,
+                    timestamp=now_iso,
+                )
+                entry = PersonLogEntry(
+                    detection_id=det_id,
+                    timestamp=now_iso,
+                    camera_id=camera_id,
+                    camera_label=camera_label,
+                    person_name=si.person_name if si.person_name != "Unknown" else None,
+                    confidence=si.confidence,
+                    face_crop_path=face_path,
+                    body_crop_path=body_path,
+                    face_encoding=None,
+                    track_id=si.track_id,
+                )
+                producer.publish(entry)
 
-            frame_count += 1
+        # Use --source from CLI, or fall back to source in camera config
+        source_file = args.source or cam_cfg.get("source")
+        loop_file = args.loop or cam_cfg.get("loop", False)
 
-            # Detect people (synchronous)
-            detections = pipeline.process_frame(frame, frame_count)
+        worker = CameraWorker(
+            camera_config=cam_cfg,
+            detection_config=detection_cfg,
+            recording_config=recording_cfg,
+            synology_config=synology_cfg,
+            onvif_config=onvif_cfg,
+            source_file=source_file,
+            loop_file=loop_file,
+            onvif_profile=args.onvif_profile,
+            show_display=True,
+            on_detection=on_detection,
+        )
+        try:
+            worker.run_blocking()
+        finally:
+            producer.close()
 
-            # Poll latest face-match results (non-blocking, from background thread)
-            match_results = pipeline.get_latest_matches()
+    else:
+        # ── Legacy mode (no config file) ─────────────────────────────
+        camera_config = {
+            "id": args.camera,
+            "label": f"camera_{args.camera}",
+            "source_type": args.source_type,
+        }
+        detection_config = {
+            "confidence_threshold": DETECTION_CONFIDENCE,
+            "encodings_path": ENCODINGS_PATH,
+            "match_tolerance": MATCH_TOLERANCE,
+            "match_min_confidence": MATCH_MIN_CONFIDENCE,
+            "match_skip_frames": MATCH_SKIP_FRAMES,
+        }
+        recording_config = {
+            "enabled": not args.no_record,
+            "output_dir": OUTPUT_DIR,
+            "clip_duration": RECORD_DURATION,
+        }
 
-            # Draw detections on frame
-            annotated_frame = draw_detections(frame.copy(), detections, match_results)
-
-            # Write to video file
-            if clip_writer:
-                clip_writer.write(annotated_frame)
-
-            # Log detections
-            if detections:
-                names = []
-                for mr in match_results:
-                    if mr.matched:
-                        names.append(mr.person_name)
-                summary = f"{len(detections)} person(s)"
-                if names:
-                    summary += f" [{', '.join(names)}]"
-                print(f"Frame {frame_count}: {summary}")
-
-            # Display frame (optional - comment out for headless)
-            cv2.imshow("Surveillance Detection", annotated_frame)
-
-            # Pace file playback to original fps; live streams use 1ms
-            wait_ms = max(1, int(1000 / fps)) if is_file else 1
-            if cv2.waitKey(wait_ms) & 0xFF == ord('q'):
-                break
-
-    except KeyboardInterrupt:
-        print("\nStopping...")
-
-    finally:
-        # Cleanup
-        if reader:
-            reader.stop()
-        pipeline.stop()
-        if clip_writer:
-            clip_writer.release()
-        cap.release()
-        cv2.destroyAllWindows()
-        print("Done!")
+        worker = CameraWorker(
+            camera_config=camera_config,
+            detection_config=detection_config,
+            recording_config=recording_config,
+            synology_config=SYNOLOGY_CONFIG,
+            onvif_config=ONVIF_CONFIG,
+            source_file=args.source,
+            loop_file=args.loop,
+            onvif_profile=args.onvif_profile,
+            show_display=True,
+        )
+        worker.run_blocking()
 
 
 if __name__ == "__main__":

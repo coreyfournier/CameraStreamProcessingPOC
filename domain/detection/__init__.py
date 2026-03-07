@@ -4,4 +4,6 @@ from domain.detection.events import (
     PersonDetectionEvent,
     FaceMatchResult,
     FaceMatchEvent,
+    SmoothedIdentity,
+    PersonLogEntry,
 )

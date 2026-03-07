@@ -1,2 +1,0 @@
-from infrastructure.detection.yolo_person_detector import PersonDetector
-from infrastructure.detection.facenet_face_matcher import FaceMatcher

@@ -5,7 +5,12 @@ Pillow==12.1.1
 ultralytics==8.4.19
 torch==2.10.0
 torchvision==0.25.0
-# facenet-pytorch must be installed with --no-deps on Python 3.13 (its numpy<2.0 constraint has no wheel for 3.13)
+# facenet-pytorch must be installed with --no-deps (its Pillow/numpy constraints are too strict)
 # pip install facenet-pytorch==2.6.0 --no-deps
 facenet-pytorch==2.6.0
-onvif-zeep
+onvif-zeep==0.2.12
+pyyaml==6.0.3
+redis==5.3.0
+strawberry-graphql[fastapi]==0.308.3
+fastapi==0.135.1
+uvicorn==0.41.0

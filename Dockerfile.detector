@@ -1,0 +1,25 @@
+FROM python:3.12.11-slim-bookworm
+
+# System deps for OpenCV
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgl1-mesa-glx \
+        libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+# Install facenet-pytorch separately with --no-deps to avoid Pillow version conflict
+RUN grep -v 'facenet-pytorch' requirements.txt > requirements-base.txt && \
+    pip install --no-cache-dir -r requirements-base.txt && \
+    pip install --no-cache-dir --no-deps facenet-pytorch==2.6.0 && \
+    rm requirements-base.txt
+
+COPY domain/ domain/
+COPY shared/ shared/
+COPY infrastructure/ infrastructure/
+COPY application/ application/
+COPY interfaces/ interfaces/
+
+CMD ["python", "-m", "interfaces.watch_all_streams", "--config", "/app/config.yaml"]

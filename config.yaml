@@ -1,0 +1,52 @@
+cameras:
+  - id: 1
+    label: "camera_1"
+    source_type: "onvif"
+    # To test with a video file instead of a live camera, use:
+    source: "./examples/Living Room-20260228-171308-trimmed.mp4"
+    # loop: true
+
+synology:
+  ip: "${SYNOLOGY_IP}"
+  port: "${SYNOLOGY_PORT}"
+  username: "${SYNOLOGY_USERNAME}"
+  password: "${SYNOLOGY_PASSWORD}"
+  secure: true
+  cert_verify: true
+  dsm_version: 7
+
+detection:
+  confidence_threshold: 0.5
+  encodings_path: "./faces-output/encodings.pkl"
+  match_tolerance: 0.9
+  match_skip_frames: 5
+  match_min_confidence: 0.5
+
+smoothing:
+  window_size: 15
+  min_hit_ratio: 0.3
+  min_avg_confidence: 0.4
+
+redis:
+  host: "redis"
+  port: 6379
+  stream_name: "person_detections"
+
+database:
+  path: "./data/surveillance.db"
+
+storage:
+  person_images_dir: "./recordings/persons"
+
+recording:
+  enabled: true
+  output_dir: "./recordings"
+  clip_duration: 30
+
+retention:
+  days: 30
+  cleanup_interval_hours: 24
+
+api:
+  host: "0.0.0.0"
+  port: 8000
