@@ -86,6 +86,7 @@ class FFmpegNvdecReader:
         self._frame_bytes = self._width * self._height * 3  # BGR24
 
         self._lock = threading.Lock()
+        self._new_frame = threading.Event()
         self._frame: np.ndarray | None = None
         self._ret = False
         self._running = False
@@ -174,8 +175,14 @@ class FFmpegNvdecReader:
         self._thread.start()
         return self
 
-    def read(self) -> tuple[bool, np.ndarray | None]:
-        """Return the most recent (ret, frame) -- non-blocking."""
+    def read(self, timeout: float = 1.0) -> tuple[bool, np.ndarray | None]:
+        """Block until a new frame arrives or timeout expires.
+
+        Returns (ret, frame).  Returns (False, None) on timeout.
+        """
+        if not self._new_frame.wait(timeout=timeout):
+            return False, None
+        self._new_frame.clear()
         with self._lock:
             return self._ret, self._frame
 
@@ -213,3 +220,4 @@ class FFmpegNvdecReader:
             with self._lock:
                 self._ret = True
                 self._frame = frame
+            self._new_frame.set()

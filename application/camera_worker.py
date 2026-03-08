@@ -19,6 +19,7 @@ from application.detection_pipeline import DetectionPipeline
 from application.stream_processor import draw_detections
 from domain.detection.events import PersonDetection, FaceMatchResult
 from infrastructure.camera.ffmpeg_nvdec_reader import FFmpegNvdecReader
+from infrastructure.detection.motion_gate import MotionGate
 from infrastructure.camera.opencv_frame_reader import OpenCVFrameReader
 from infrastructure.camera.onvif_camera_source import OnvifCameraSource
 from infrastructure.camera.rtsp_camera_source import RtspCameraSource
@@ -208,15 +209,17 @@ class CameraWorker:
                         probe_fps = int(probe_cap.get(cv2.CAP_PROP_FPS)) or 15
                         probe_cap.release()
 
+                        target_fps = det.get("target_fps", 2)
                         nvdec_reader = FFmpegNvdecReader(
                             rtsp_url=rtsp_url,
                             width=probe_w,
                             height=probe_h,
+                            target_fps=target_fps,
                         )
                         nvdec_reader.start()
                         print(
                             f"[{self._label}] FFmpeg {'NVDEC' if nvdec_reader.using_nvdec else 'software'} "
-                            f"reader: {probe_w}x{probe_h} -> {nvdec_reader.width}x{nvdec_reader.height} @ 5fps"
+                            f"reader: {probe_w}x{probe_h} -> {nvdec_reader.width}x{nvdec_reader.height} @ {target_fps}fps"
                         )
                     else:
                         probe_cap.release()
@@ -261,16 +264,20 @@ class CameraWorker:
                 clip_duration_seconds=rec.get("clip_duration", 30),
             )
 
-        print(f"[{self._label}] Starting detection loop...")
+        # Motion gate — skip YOLO on static frames
+        motion_threshold = det.get("motion_threshold", 0.5)
+        motion_gate = MotionGate(threshold=motion_threshold)
+        skipped_count = 0
+
+        print(f"[{self._label}] Starting detection loop (motion threshold={motion_threshold}%)...")
         frame_count = 0
 
         try:
             while self._running:
                 # Read frame
                 if nvdec_reader:
-                    ret, frame = nvdec_reader.read()
+                    ret, frame = nvdec_reader.read(timeout=1.0)
                     if not ret or frame is None:
-                        time.sleep(0.01)
                         continue
                 elif reader:
                     ret, frame = reader.read()
@@ -287,6 +294,16 @@ class CameraWorker:
                         break
 
                 frame_count += 1
+
+                # Skip detection if no motion detected
+                if not motion_gate.has_motion(frame):
+                    skipped_count += 1
+                    if skipped_count % 50 == 0:
+                        print(f"[{self._label}] Skipped {skipped_count} static frames")
+                    # Still write to clip and continue
+                    if clip_writer:
+                        clip_writer.write(frame)
+                    continue
 
                 # Detect people (synchronous)
                 detections = pipeline.process_frame(frame, frame_count)
