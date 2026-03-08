@@ -344,3 +344,103 @@ a:hover {
   color: #6b7280;
   margin-left: 12px;
 }
+
+/* Camera grid */
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.camera-card {
+  background: #1a1d27;
+  border: 1px solid #2a2d37;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.camera-card:hover {
+  border-color: #4a4d57;
+}
+
+.camera-preview {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: #111318;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.camera-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.camera-placeholder {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.camera-info {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.camera-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  flex: 1;
+  min-width: 100px;
+}
+
+.camera-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.camera-type {
+  background: #2a2d37;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.camera-info .btn-view,
+.camera-info .btn-stop {
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.camera-info .btn-view {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.camera-info .btn-view:hover {
+  background: #2563eb;
+}
+
+.camera-info .btn-stop {
+  background: #ef4444;
+  color: #fff;
+}
+
+.camera-info .btn-stop:hover {
+  background: #dc2626;
+}

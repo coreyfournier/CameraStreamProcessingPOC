@@ -95,6 +95,18 @@ def get_onvif_config(config: dict) -> dict:
     }
 
 
+def get_rtsp_config(config: dict) -> dict:
+    """Return the RTSP section, mapped to RtspCameraSource keys."""
+    rtsp = config.get("rtsp", {})
+    return {
+        "ip": rtsp.get("ip", os.environ.get("RTSP_IP", os.environ.get("ONVIF_IP", ""))),
+        "port": rtsp.get("port", os.environ.get("RTSP_PORT", os.environ.get("ONVIF_PORT", "554"))),
+        "username": rtsp.get("username", os.environ.get("RTSP_USERNAME", os.environ.get("ONVIF_USERNAME", ""))),
+        "password": rtsp.get("password", os.environ.get("RTSP_PASSWORD", os.environ.get("ONVIF_PASSWORD", ""))),
+        "path": rtsp.get("path", os.environ.get("RTSP_PATH", "")),
+    }
+
+
 def get_detection_config(config: dict) -> dict:
     """Return the detection section."""
     return config.get("detection", {

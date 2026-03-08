@@ -21,6 +21,7 @@ from domain.detection.events import PersonDetection, FaceMatchResult
 from infrastructure.camera.ffmpeg_nvdec_reader import FFmpegNvdecReader
 from infrastructure.camera.opencv_frame_reader import OpenCVFrameReader
 from infrastructure.camera.onvif_camera_source import OnvifCameraSource
+from infrastructure.camera.rtsp_camera_source import RtspCameraSource
 from infrastructure.camera.synology_camera_source import SynologyCameraSource
 from infrastructure.recording.avi_clip_writer import AviClipWriter
 
@@ -60,6 +61,7 @@ class CameraWorker:
         recording_config: dict,
         synology_config: dict | None = None,
         onvif_config: dict | None = None,
+        rtsp_config: dict | None = None,
         source_file: str | None = None,
         loop_file: bool = False,
         onvif_profile: int = 0,
@@ -72,6 +74,7 @@ class CameraWorker:
         self._recording_config = recording_config
         self._synology_config = synology_config
         self._onvif_config = onvif_config
+        self._rtsp_config = rtsp_config
         self._source_file = source_file
         self._loop_file = loop_file
         self._onvif_profile = onvif_profile
@@ -129,6 +132,9 @@ class CameraWorker:
             elif source_type == "onvif" and self._onvif_config:
                 source = OnvifCameraSource(self._onvif_config)
                 return source.get_rtsp_url(profile_index=self._onvif_profile)
+            elif source_type == "rtsp" and self._rtsp_config:
+                source = RtspCameraSource(self._rtsp_config)
+                return source.get_rtsp_url()
         except Exception as exc:
             print(f"[{self._label}] Could not get RTSP URL: {exc}")
         return None
@@ -155,6 +161,11 @@ class CameraWorker:
                 raise RuntimeError("ONVIF config required for onvif source_type")
             source = OnvifCameraSource(self._onvif_config)
             cap = source.open(profile_index=self._onvif_profile)
+        elif source_type == "rtsp":
+            if not self._rtsp_config:
+                raise RuntimeError("RTSP config required for rtsp source_type")
+            source = RtspCameraSource(self._rtsp_config)
+            cap = source.open()
         else:
             raise RuntimeError(f"Unknown source_type: {source_type}")
 

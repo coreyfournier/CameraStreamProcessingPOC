@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import PersonDetail from './pages/PersonDetail';
 import UnknownClusters from './pages/UnknownClusters';
+import Cameras from './pages/Cameras';
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/person/:name" element={<PersonDetail />} />
         <Route path="/clusters" element={<UnknownClusters />} />
+        <Route path="/cameras" element={<Cameras />} />
       </Routes>
     </Layout>
   );

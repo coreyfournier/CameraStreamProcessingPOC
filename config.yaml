@@ -1,22 +1,13 @@
 cameras:
-  - id: 1
-    label: "Driveway Back"
-    source_type: "synology"
-  - id: 2
-    label: "Pekar Yard"
-    source_type: "synology"
-  - id: 5
-    label: "Garage"
-    source_type: "synology"
-  - id: 9
-    label: "Front Door"
-    source_type: "synology"
-  - id: 12
-    label: "River Woods"
-    source_type: "synology"
-  - id: 14
-    label: "Living Room"
-    source_type: "synology"
+  - id: 15
+    label: "Reolink E1 Pro"
+    source_type: "rtsp"
+    rtsp:
+      ip: "${ONVIF_IP}"
+      port: 554
+      username: "${ONVIF_USERNAME}"
+      password: "${ONVIF_PASSWORD}"
+      path: "/h264Preview_01_main"
 
 synology:
   ip: "${SYNOLOGY_IP}"

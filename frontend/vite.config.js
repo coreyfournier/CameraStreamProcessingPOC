@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/graphql': 'http://localhost:8000',
       '/images': 'http://localhost:8000',
+      '/api': 'http://localhost:8000',
     },
   },
 });

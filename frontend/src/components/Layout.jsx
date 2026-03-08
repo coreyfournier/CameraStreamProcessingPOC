@@ -34,6 +34,9 @@ export default function Layout({ children }) {
         <NavLink to="/clusters" className={({ isActive }) => isActive ? 'active' : ''}>
           Clusters
         </NavLink>
+        <NavLink to="/cameras" className={({ isActive }) => isActive ? 'active' : ''}>
+          Cameras
+        </NavLink>
         <div className="nav-persons">
           <select onChange={handlePersonSelect} defaultValue="">
             <option value="" disabled>Go to person...</option>

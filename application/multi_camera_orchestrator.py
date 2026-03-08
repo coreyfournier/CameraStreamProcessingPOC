@@ -29,6 +29,7 @@ from infrastructure.config import (
     get_onvif_config,
     get_recording_config,
     get_redis_config,
+    get_rtsp_config,
     get_smoothing_config,
     get_storage_config,
     get_synology_config,
@@ -60,6 +61,7 @@ class MultiCameraOrchestrator:
         self._storage_config = get_storage_config(config)
         self._synology_config = get_synology_config(config)
         self._onvif_config = get_onvif_config(config)
+        self._rtsp_config = get_rtsp_config(config)
 
         # Shared infrastructure (thread-safe)
         self._redis_producer = RedisStreamProducer(
@@ -103,6 +105,17 @@ class MultiCameraOrchestrator:
             # the top-level onvif/synology section with its own nested block.
             synology_cfg = self._synology_config
             onvif_cfg = self._onvif_config
+            rtsp_cfg = self._rtsp_config
+
+            if source_type == "rtsp" and "rtsp" in cam_cfg:
+                per_cam = cam_cfg["rtsp"]
+                rtsp_cfg = {
+                    "ip": per_cam.get("ip", rtsp_cfg.get("ip", "")),
+                    "port": per_cam.get("port", rtsp_cfg.get("port", "554")),
+                    "username": per_cam.get("username", rtsp_cfg.get("username", "")),
+                    "password": per_cam.get("password", rtsp_cfg.get("password", "")),
+                    "path": per_cam.get("path", rtsp_cfg.get("path", "")),
+                }
 
             if source_type == "onvif" and "onvif" in cam_cfg:
                 per_cam = cam_cfg["onvif"]
@@ -147,6 +160,7 @@ class MultiCameraOrchestrator:
                 recording_config=self._recording_config,
                 synology_config=synology_cfg,
                 onvif_config=onvif_cfg,
+                rtsp_config=rtsp_cfg,
                 source_file=source_file,
                 loop_file=loop_file,
                 onvif_profile=onvif_profile,

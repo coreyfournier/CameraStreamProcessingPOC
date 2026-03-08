@@ -9,8 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from strawberry.fastapi import GraphQLRouter
 
-from infrastructure.config import get_database_config, get_storage_config
+from infrastructure.config import (
+    get_camera_configs,
+    get_database_config,
+    get_onvif_config,
+    get_rtsp_config,
+    get_storage_config,
+    get_synology_config,
+)
 from infrastructure.database.person_log_db import PersonLogDB
+from interfaces.api.camera_routes import configure as configure_cameras, router as camera_router
 from interfaces.api.schema import schema
 
 
@@ -30,6 +38,14 @@ def create_app(config: dict) -> FastAPI:
     """
     db_config = get_database_config(config)
     storage_config = get_storage_config(config)
+
+    # Configure camera routes with connection info
+    configure_cameras(
+        camera_configs=get_camera_configs(config),
+        synology_config=get_synology_config(config),
+        onvif_config=get_onvif_config(config),
+        rtsp_config=get_rtsp_config(config),
+    )
 
     db = PersonLogDB(db_config["path"])
     images_dir = Path(storage_config["person_images_dir"])
@@ -55,6 +71,7 @@ def create_app(config: dict) -> FastAPI:
     )
 
     app.include_router(graphql_app, prefix="/graphql")
+    app.include_router(camera_router)
 
     # Serve person crop images as static files
     app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")

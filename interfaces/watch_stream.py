@@ -67,7 +67,7 @@ def parse_args():
         help="Loop the source video file when it ends (only with --source)",
     )
     parser.add_argument(
-        "--source-type", choices=["synology", "onvif"], default="synology",
+        "--source-type", choices=["synology", "onvif", "rtsp"], default="synology",
         help="Live camera source type (default: synology)",
     )
     parser.add_argument(
@@ -96,6 +96,7 @@ def main():
             get_recording_config,
             get_synology_config,
             get_onvif_config,
+            get_rtsp_config,
             get_redis_config,
             get_storage_config,
             get_smoothing_config,
@@ -112,6 +113,7 @@ def main():
         recording_cfg = get_recording_config(config)
         synology_cfg = get_synology_config(config)
         onvif_cfg = get_onvif_config(config)
+        rtsp_cfg = get_rtsp_config(config)
         redis_cfg = get_redis_config(config)
         storage_cfg = get_storage_config(config)
         smoothing_cfg = get_smoothing_config(config)
@@ -188,6 +190,7 @@ def main():
             recording_config=recording_cfg,
             synology_config=synology_cfg,
             onvif_config=onvif_cfg,
+            rtsp_config=rtsp_cfg,
             source_file=source_file,
             loop_file=loop_file,
             onvif_profile=args.onvif_profile,
