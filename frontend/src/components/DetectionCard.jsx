@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 function timeAgo(timestamp) {
@@ -23,20 +24,50 @@ export default function DetectionCard({ detection }) {
     bodyCropUrl,
   } = detection;
 
+  const [showBody, setShowBody] = useState(false);
+  const hasFaceCrop = !!faceCropUrl;
   const imageUrl = faceCropUrl || bodyCropUrl;
   const isUnknown = !personName || personName === 'Unknown';
   const displayName = isUnknown ? 'Unknown' : personName;
   const confidencePct = confidence != null ? `${(confidence * 100).toFixed(0)}%` : null;
 
+  // When there's a real face crop, toggle between face and body.
+  // When there's only a body crop, toggle between face-zone (top portion) and full body.
+  const showingBody = showBody;
+  const canToggle = !!bodyCropUrl;
+
+  const handleToggle = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowBody((v) => !v);
+  };
+
   const card = (
     <div className="detection-card">
       {imageUrl ? (
-        <img
-          className="card-image"
-          src={imageUrl}
-          alt={displayName}
-          loading="lazy"
-        />
+        <div className="card-image-wrapper" onClick={canToggle ? handleToggle : undefined}
+             style={{ cursor: canToggle ? 'pointer' : 'default' }}>
+          {hasFaceCrop ? (
+            <img
+              className="card-image"
+              src={showingBody ? bodyCropUrl : faceCropUrl}
+              alt={displayName}
+              loading="lazy"
+            />
+          ) : (
+            <img
+              className={showingBody ? 'card-image' : 'card-image card-image-face-zone'}
+              src={bodyCropUrl}
+              alt={displayName}
+              loading="lazy"
+            />
+          )}
+          {canToggle && (
+            <span className="card-image-toggle">
+              {showingBody ? '👤 Face' : '🧍 Body'}
+            </span>
+          )}
+        </div>
       ) : (
         <div className="card-placeholder">No image</div>
       )}

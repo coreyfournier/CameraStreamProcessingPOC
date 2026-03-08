@@ -18,6 +18,35 @@ class OnvifCameraSource:
         """
         self.__config = config
 
+    def get_rtsp_url(self, profile_index: int = 0) -> str | None:
+        """Return the RTSP URL for the camera without opening a VideoCapture."""
+        ip = self.__config["ip"]
+        port = int(self.__config["port"])
+        username = self.__config["username"]
+        password = self.__config["password"]
+
+        try:
+            from onvif import ONVIFCamera
+        except ImportError:
+            return None
+
+        cam = ONVIFCamera(ip, port, username, password)
+        media = cam.create_media_service()
+        profiles = media.GetProfiles()
+        if not profiles:
+            return None
+
+        token = profiles[profile_index].token
+        stream_setup = {
+            "StreamSetup": {
+                "Stream": "RTP-Unicast",
+                "Transport": {"Protocol": "RTSP"},
+            },
+            "ProfileToken": token,
+        }
+        uri = media.GetStreamUri(stream_setup).Uri
+        return self._inject_credentials(uri, username, password)
+
     def open(self, profile_index: int = 0) -> cv2.VideoCapture:
         """Connect to the ONVIF camera and return an opened VideoCapture.
 

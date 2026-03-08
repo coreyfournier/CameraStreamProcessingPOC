@@ -18,6 +18,7 @@ import cv2
 from application.detection_pipeline import DetectionPipeline
 from application.stream_processor import draw_detections
 from domain.detection.events import PersonDetection, FaceMatchResult
+from infrastructure.camera.ffmpeg_nvdec_reader import FFmpegNvdecReader
 from infrastructure.camera.opencv_frame_reader import OpenCVFrameReader
 from infrastructure.camera.onvif_camera_source import OnvifCameraSource
 from infrastructure.camera.synology_camera_source import SynologyCameraSource
@@ -64,6 +65,7 @@ class CameraWorker:
         onvif_profile: int = 0,
         show_display: bool = True,
         on_detection: Callable | None = None,
+        shared_detector=None,
     ) -> None:
         self._camera_config = camera_config
         self._detection_config = detection_config
@@ -75,6 +77,7 @@ class CameraWorker:
         self._onvif_profile = onvif_profile
         self._show_display = show_display
         self._on_detection = on_detection
+        self._shared_detector = shared_detector
 
         self._thread: threading.Thread | None = None
         self._running = False
@@ -113,6 +116,22 @@ class CameraWorker:
         self._run()
 
     # ── Internal ─────────────────────────────────────────────────────
+
+    def _get_rtsp_url(self) -> str | None:
+        """Try to obtain an RTSP URL from the camera source."""
+        source_type = self._camera_config.get("source_type", "synology")
+        camera_id = self._camera_config.get("id", 1)
+
+        try:
+            if source_type == "synology" and self._synology_config:
+                source = SynologyCameraSource(self._synology_config)
+                return source.get_rtsp_url(camera_id)
+            elif source_type == "onvif" and self._onvif_config:
+                source = OnvifCameraSource(self._onvif_config)
+                return source.get_rtsp_url(profile_index=self._onvif_profile)
+        except Exception as exc:
+            print(f"[{self._label}] Could not get RTSP URL: {exc}")
+        return None
 
     def _open_source(self):
         """Open and return (cap, is_file) for the video source."""
@@ -154,28 +173,68 @@ class CameraWorker:
             match_tolerance=det.get("match_tolerance", 0.9),
             match_min_confidence=det.get("match_min_confidence", 0.5),
             match_skip_frames=det.get("match_skip_frames", 5),
+            shared_detector=self._shared_detector,
         )
         pipeline.start()
 
-        # Open video source
-        try:
-            cap, is_file = self._open_source()
-        except RuntimeError as exc:
-            print(f"[{self._label}] Error: {exc}")
-            pipeline.stop()
-            return
+        # Try FFmpeg NVDEC for live streams (hardware-accelerated H.264 decode)
+        nvdec_reader = None
+        cap = None
+        is_file = False
+
+        if self._source_file is None:
+            rtsp_url = self._get_rtsp_url()
+            if rtsp_url:
+                # Probe stream dimensions with OpenCV briefly
+                import shutil
+                if shutil.which("ffmpeg"):
+                    print(f"[{self._label}] Probing stream for dimensions...")
+                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+                    probe_cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+                    if probe_cap.isOpened():
+                        probe_w = int(probe_cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+                        probe_h = int(probe_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+                        probe_fps = int(probe_cap.get(cv2.CAP_PROP_FPS)) or 15
+                        probe_cap.release()
+
+                        nvdec_reader = FFmpegNvdecReader(
+                            rtsp_url=rtsp_url,
+                            width=probe_w,
+                            height=probe_h,
+                        )
+                        nvdec_reader.start()
+                        print(
+                            f"[{self._label}] FFmpeg {'NVDEC' if nvdec_reader.using_nvdec else 'software'} "
+                            f"reader: {probe_w}x{probe_h} -> {nvdec_reader.width}x{nvdec_reader.height} @ 5fps"
+                        )
+                    else:
+                        probe_cap.release()
+
+        # Fall back to OpenCV if NVDEC reader wasn't created
+        if nvdec_reader is None:
+            try:
+                cap, is_file = self._open_source()
+            except RuntimeError as exc:
+                print(f"[{self._label}] Error: {exc}")
+                pipeline.stop()
+                return
 
         # Video properties
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+        if nvdec_reader:
+            width = nvdec_reader.width
+            height = nvdec_reader.height
+            fps = probe_fps
+        else:
+            fps = int(cap.get(cv2.CAP_PROP_FPS)) or 15
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
 
         source_desc = self._source_file if is_file else "stream"
         print(f"[{self._label}] Opened {source_desc}: {width}x{height} @ {fps}fps")
 
-        # Background frame reader for live streams
+        # Background frame reader for OpenCV live streams
         reader = None
-        if not is_file:
+        if cap is not None and not is_file:
             reader = OpenCVFrameReader(cap).start()
 
         # Clip writer
@@ -197,7 +256,12 @@ class CameraWorker:
         try:
             while self._running:
                 # Read frame
-                if reader:
+                if nvdec_reader:
+                    ret, frame = nvdec_reader.read()
+                    if not ret or frame is None:
+                        time.sleep(0.01)
+                        continue
+                elif reader:
                     ret, frame = reader.read()
                     if not ret or frame is None:
                         time.sleep(0.01)
@@ -253,12 +317,15 @@ class CameraWorker:
             print(f"\n[{self._label}] Stopping...")
 
         finally:
+            if nvdec_reader:
+                nvdec_reader.stop()
             if reader:
                 reader.stop()
             pipeline.stop()
             if clip_writer:
                 clip_writer.release()
-            cap.release()
+            if cap is not None:
+                cap.release()
             if self._show_display:
                 cv2.destroyAllWindows()
             self._running = False

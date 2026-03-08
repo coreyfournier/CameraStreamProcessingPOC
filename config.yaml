@@ -1,10 +1,22 @@
 cameras:
   - id: 1
-    label: "camera_1"
-    source_type: "onvif"
-    # To test with a video file instead of a live camera, use:
-    source: "./examples/Living Room-20260228-171308-trimmed.mp4"
-    # loop: true
+    label: "Driveway Back"
+    source_type: "synology"
+  - id: 2
+    label: "Pekar Yard"
+    source_type: "synology"
+  - id: 5
+    label: "Garage"
+    source_type: "synology"
+  - id: 9
+    label: "Front Door"
+    source_type: "synology"
+  - id: 12
+    label: "River Woods"
+    source_type: "synology"
+  - id: 14
+    label: "Living Room"
+    source_type: "synology"
 
 synology:
   ip: "${SYNOLOGY_IP}"

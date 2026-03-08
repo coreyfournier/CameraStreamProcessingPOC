@@ -71,6 +71,13 @@ class MultiCameraOrchestrator:
             base_dir=self._storage_config.get("person_images_dir", "./recordings/persons"),
         )
 
+        # Shared YOLO detector (single model on GPU, used by all cameras)
+        from infrastructure.detection.yolo_person_detector import PersonDetector
+        self._shared_detector = PersonDetector(
+            confidence_threshold=self._detection_config.get("confidence_threshold", 0.5),
+        )
+        logger.info("Shared PersonDetector using device: %s", self._shared_detector.device)
+
         # Build workers
         self._workers: list[CameraWorker] = []
         self._smoothers: dict[str, IdentitySmoother] = {}
@@ -145,6 +152,7 @@ class MultiCameraOrchestrator:
                 onvif_profile=onvif_profile,
                 show_display=False,
                 on_detection=make_callback(_label, _cam_cfg, _smoother),
+                shared_detector=self._shared_detector,
             )
             self._workers.append(worker)
 

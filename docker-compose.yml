@@ -24,6 +24,13 @@ services:
       - ./examples:/app/examples:ro
       - recordings:/app/recordings
     env_file: .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]
 
   consumer:
     build:
@@ -47,7 +54,7 @@ services:
       - consumer
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - recordings:/app/recordings:ro
+      - recordings:/app/recordings
       - db-data:/app/data
     ports:
       - "8000:8000"
@@ -64,4 +71,14 @@ services:
 volumes:
   redis-data:
   recordings:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: D:/camerastreams/recordings
   db-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: D:/camerastreams/db-data

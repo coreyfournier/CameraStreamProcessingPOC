@@ -18,6 +18,16 @@ class SynologyCameraSource:
     def __init__(self, config: dict):
         self.__config = config
 
+    def get_rtsp_url(self, camera_id: int) -> str | None:
+        """Return the best RTSP URL for the camera, or None if unavailable."""
+        ss = self.connect()
+        stream_url = self.get_camera_stream_url(ss, camera_id)
+        if 'rtspPath' in stream_url:
+            return stream_url['rtspPath']
+        if 'rtspOverHttpPath' in stream_url:
+            return stream_url['rtspOverHttpPath']
+        return None
+
     def open(self, camera_id: int) -> cv2.VideoCapture:
         """Connect to Synology and open a VideoCapture for the given camera.
 

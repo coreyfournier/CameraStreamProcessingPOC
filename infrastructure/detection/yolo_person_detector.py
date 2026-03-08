@@ -7,6 +7,8 @@ for async listeners.
 
 from __future__ import annotations
 
+import threading
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -32,10 +34,16 @@ class PersonDetector(EventEmitter):
         self,
         model_name: str = "yolov8n.pt",
         confidence_threshold: float = 0.5,
+        device: str | None = None,
     ) -> None:
         super().__init__()
         self.model = YOLO(model_name, verbose=False)
+        if device is None:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
         self.confidence_threshold = confidence_threshold
+        self._lock = threading.Lock()
 
     def process_frame(self, context: FrameContext) -> list[PersonDetection]:
         """Run detection on *context.frame*, return person detections.
@@ -50,12 +58,14 @@ class PersonDetector(EventEmitter):
         frame = context.frame
         h, w = frame.shape[:2]
 
-        results = self.model(
-            frame,
-            classes=[PERSON_CLASS_ID],
-            conf=self.confidence_threshold,
-            verbose=False,
-        )
+        with self._lock:
+            results = self.model(
+                frame,
+                classes=[PERSON_CLASS_ID],
+                conf=self.confidence_threshold,
+                device=self.device,
+                verbose=False,
+            )
 
         detections: list[PersonDetection] = []
         for r in results:

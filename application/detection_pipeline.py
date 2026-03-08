@@ -153,10 +153,12 @@ class DetectionPipeline:
         match_tolerance: float = 0.6,
         match_min_confidence: float = 0.5,
         match_skip_frames: int = 5,
+        shared_detector: PersonDetector | None = None,
     ) -> None:
-        self.detector = PersonDetector(
+        self.detector = shared_detector or PersonDetector(
             confidence_threshold=confidence_threshold,
         )
+        self._owns_detector = shared_detector is None
         self.matcher = FaceMatcher(
             encodings_path=encodings_path,
             tolerance=match_tolerance,
