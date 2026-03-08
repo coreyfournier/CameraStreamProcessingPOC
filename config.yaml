@@ -8,6 +8,15 @@ cameras:
       username: "${ONVIF_USERNAME}"
       password: "${ONVIF_PASSWORD}"
       path: "/h264Preview_01_main"
+  - id: 16
+    label: "Front Door Bell"
+    source_type: "rtsp"
+    rtsp:
+      ip: "${DOORBELL_IP}"
+      port: 554
+      username: "${DOORBELL_USERNAME}"
+      password: "${DOORBELL_PASSWORD}"
+      path: "/cam/realmonitor?channel=1&subtype=0"
 
 synology:
   ip: "${SYNOLOGY_IP}"
